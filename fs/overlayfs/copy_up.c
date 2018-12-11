@@ -93,9 +93,9 @@ int ovl_copy_xattr(struct dentry *old, struct dentry *new)
 		if (ovl_is_private_xattr(name))
 			continue;
 retry:
-		size = vfs_getxattr(old, name, value, value_size);
+		size = vfs_getxattr(NULL, old, name, value, value_size);
 		if (size == -ERANGE)
-			size = vfs_getxattr(old, name, NULL, 0);
+			size = vfs_getxattr(NULL, old, name, NULL, 0);
 
 		if (size < 0) {
 			error = size;
@@ -122,7 +122,7 @@ retry:
 			error = 0;
 			continue; /* Discard */
 		}
-		error = vfs_setxattr(new, name, value, size, 0);
+		error = vfs_setxattr(NULL, new, name, value, size, 0);
 		if (error)
 			break;
 	}
@@ -260,7 +260,7 @@ static int ovl_copy_up_locked(struct dentry *workdir, struct dentry *upperdir,
 	stat->mode = mode;
 
 	if (new_creds) {
-		revert_creds(old_creds);
+		ovl_revert_creds(old_creds);
 		put_cred(new_creds);
 	}
 
@@ -421,7 +421,7 @@ int ovl_copy_up(struct dentry *dentry)
 		dput(parent);
 		dput(next);
 	}
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return err;
 }

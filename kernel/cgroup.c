@@ -67,6 +67,10 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/cgroup.h>
 
+#ifdef CONFIG_ROW_OPTIMIZATION
+#include <linux/ioprio.h>
+#endif
+
 /*
  * pidlists linger the following amount before being destroyed.  The goal
  * is avoiding frequent destruction in the middle of consecutive read calls
@@ -1327,9 +1331,15 @@ static char *cgroup_file_name(struct cgroup *cgrp, const struct cftype *cft,
 			      char *buf)
 {
 	struct cgroup_subsys *ss = cft->ss;
-
+#ifdef CONFIG_CPUSETS
+	if (cft->ss && !(cft->flags & CFTYPE_NO_PREFIX) &&
+	    !(cgrp->root->flags & CGRP_ROOT_NOPREFIX) &&
+	    !(cft->ss->id == cpuset_cgrp_id &&
+		(cgrp->root->flags & CGRP_ROOT_CPUSET_NOPREFIX)))
+#else
 	if (cft->ss && !(cft->flags & CFTYPE_NO_PREFIX) &&
 	    !(cgrp->root->flags & CGRP_ROOT_NOPREFIX))
+#endif
 		snprintf(buf, CGROUP_FILE_NAME_MAX, "%s.%s",
 			 cgroup_on_dfl(cgrp) ? ss->name : ss->legacy_name,
 			 cft->name);
@@ -1669,6 +1679,8 @@ static int cgroup_show_options(struct seq_file *seq,
 				seq_show_option(seq, ss->legacy_name, NULL);
 	if (root->flags & CGRP_ROOT_NOPREFIX)
 		seq_puts(seq, ",noprefix");
+	if (root->flags & CGRP_ROOT_CPUSET_NOPREFIX)
+		seq_puts(seq, ",cpuset_noprefix");
 	if (root->flags & CGRP_ROOT_XATTR)
 		seq_puts(seq, ",xattr");
 
@@ -1729,6 +1741,10 @@ static int parse_cgroupfs_options(char *data, struct cgroup_sb_opts *opts)
 		}
 		if (!strcmp(token, "noprefix")) {
 			opts->flags |= CGRP_ROOT_NOPREFIX;
+			continue;
+		}
+		if (!strcmp(token, "cpuset_noprefix")) {
+			opts->flags |= CGRP_ROOT_CPUSET_NOPREFIX;
 			continue;
 		}
 		if (!strcmp(token, "clone_children")) {
@@ -4688,6 +4704,52 @@ static int pidlist_array_load(struct cgroup *cgrp, enum cgroup_filetype type,
 	return 0;
 }
 
+#ifdef CONFIG_ROW_OPTIMIZATION
+/* cgroup_update_task_ioprio - set the task ioprio
+ * according to the cpuset ioprio
+ * @css: cgroup_subsys_state of the cgroup
+ * @ioprio: the ioprio to set the tasks
+ *
+ * mutex_lock the cgroup and then traverse the cgroups tasks
+ * then accroding to the ioprio set the ioprio of the task
+ */
+int cgroup_update_ioprio(struct cgroup_subsys_state *css, int ioprio)
+{
+	int length;
+	int pid, n = 0;
+	int ret = 0;
+	struct css_task_iter it;
+	struct task_struct *tsk;
+	unsigned int u_ioprio;
+	int ioprio_set;
+
+	if (ioprio < 0 || ioprio > 3)
+		return -EINVAL;
+	u_ioprio = ioprio;
+	ioprio_set = (int)(u_ioprio << IOPRIO_CLASS_SHIFT);
+	/*lint -save -e115*/
+	length = cgroup_task_count(css->cgroup);
+	/*lint restore*/
+	css_task_iter_start(css, &it);
+	while ((tsk = css_task_iter_next(&it))) {
+		if (unlikely(n == length))
+			break;
+		pid = task_pid_vnr(tsk);
+		if (pid > 0) {
+			ret = set_task_ioprio(tsk, ioprio_set);
+			if (ret)
+				pr_warn("row :set tid %d to priority %d failed",
+						tsk->pid, ioprio);
+			n++;
+		}
+	}
+	css_task_iter_end(&it);
+	length = n;
+
+	return length;
+}
+#endif
+
 /**
  * cgroupstats_build - build and fill cgroupstats
  * @stats: cgroupstats to fill information into
@@ -6600,7 +6662,7 @@ static int cgroup_css_links_read(struct seq_file *seq, void *v)
 		struct task_struct *task;
 		int count = 0;
 
-		seq_printf(seq, "css_set %p\n", cset);
+		seq_printf(seq, "css_set %pK\n", cset);
 
 		list_for_each_entry(task, &cset->tasks, cg_list) {
 			if (count++ > MAX_TASKS_SHOWN_PER_CSS)

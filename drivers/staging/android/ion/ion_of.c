@@ -96,19 +96,19 @@ struct ion_platform_data *ion_parse_dt(struct platform_device *pdev,
 	data = devm_kzalloc(&pdev->dev, sizeof(struct ion_platform_data),
 			    GFP_KERNEL);
 	if (!data)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(-ENOMEM); /*lint !e429*/
 
 	for_each_available_child_of_node(dt_node, node) {
 		struct platform_device *heap_pdev;
 
 		ret = ion_parse_dt_heap_common(node, &heaps[i], compatible);
 		if (ret)
-			return ERR_PTR(ret);
+			return ERR_PTR(ret); /*lint !e429*/
 
 		heap_pdev = of_platform_device_create(node, heaps[i].name,
 						      &pdev->dev);
 		if (!heap_pdev)
-			return ERR_PTR(-ENOMEM);
+			return ERR_PTR(-ENOMEM); /*lint !e429*/
 		heap_pdev->dev.platform_data = &heaps[i];
 
 		heaps[i].priv = &heap_pdev->dev;
@@ -128,7 +128,7 @@ out_err:
 		if (heaps[i].priv)
 			of_device_unregister(to_platform_device(heaps[i].priv));
 
-	return ERR_PTR(ret);
+	return ERR_PTR(ret); /*lint !e429*/
 }
 
 void ion_destroy_platform_data(struct ion_platform_data *data)
@@ -152,7 +152,7 @@ static int rmem_ion_device_init(struct reserved_mem *rmem, struct device *dev)
 	struct ion_platform_heap *heap = pdev->dev.platform_data;
 
 	heap->base = rmem->base;
-	heap->base = rmem->size;
+	heap->size = rmem->size;
 	pr_debug("%s: heap %s base %pa size %pa dev %p\n", __func__,
 		 heap->name, &rmem->base, &rmem->size, dev);
 	return 0;

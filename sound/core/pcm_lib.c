@@ -41,6 +41,7 @@
 #define trace_hw_ptr_error(substream, reason)
 #endif
 
+extern void snd_pcm_print_timeout(struct snd_pcm_substream *substream, unsigned int timeout_type);
 /*
  * fill ring buffer with silence
  * runtime->silence_start: starting pointer to silence area
@@ -2020,6 +2021,8 @@ static snd_pcm_sframes_t snd_pcm_lib_write1(struct snd_pcm_substream *substream,
 	snd_pcm_uframes_t avail;
 	int err = 0;
 
+	snd_pcm_print_timeout(substream, SND_TIMEOUT_TYPE_WRITE_INTERVAL);
+
 	if (size == 0)
 		return 0;
 
@@ -2107,6 +2110,7 @@ static snd_pcm_sframes_t snd_pcm_lib_write1(struct snd_pcm_substream *substream,
 	if (xfer > 0 && err >= 0)
 		snd_pcm_update_state(substream, runtime);
 	snd_pcm_stream_unlock_irq(substream);
+	snd_pcm_print_timeout(substream, SND_TIMEOUT_TYPE_WRITE_PROC);
 	return xfer > 0 ? (snd_pcm_sframes_t)xfer : err;
 }
 
@@ -2238,6 +2242,8 @@ static snd_pcm_sframes_t snd_pcm_lib_read1(struct snd_pcm_substream *substream,
 	snd_pcm_uframes_t avail;
 	int err = 0;
 
+	snd_pcm_print_timeout(substream, SND_TIMEOUT_TYPE_READ_INTERVAL);
+
 	if (size == 0)
 		return 0;
 
@@ -2333,6 +2339,7 @@ static snd_pcm_sframes_t snd_pcm_lib_read1(struct snd_pcm_substream *substream,
 	if (xfer > 0 && err >= 0)
 		snd_pcm_update_state(substream, runtime);
 	snd_pcm_stream_unlock_irq(substream);
+	snd_pcm_print_timeout(substream, SND_TIMEOUT_TYPE_READ_PROC);
 	return xfer > 0 ? (snd_pcm_sframes_t)xfer : err;
 }
 

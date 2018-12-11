@@ -871,13 +871,12 @@ static int zpa2326_wait_oneshot_completion(const struct iio_dev   *indio_dev,
 {
 	int          ret;
 	unsigned int val;
-	long     timeout;
 
 	zpa2326_dbg(indio_dev, "waiting for one shot completion interrupt");
 
-	timeout = wait_for_completion_interruptible_timeout(
+	ret = wait_for_completion_interruptible_timeout(
 		&private->data_ready, ZPA2326_CONVERSION_JIFFIES);
-	if (timeout > 0)
+	if (ret > 0)
 		/*
 		 * Interrupt handler completed before timeout: return operation
 		 * status.
@@ -887,16 +886,13 @@ static int zpa2326_wait_oneshot_completion(const struct iio_dev   *indio_dev,
 	/* Clear all interrupts just to be sure. */
 	regmap_read(private->regmap, ZPA2326_INT_SOURCE_REG, &val);
 
-	if (!timeout) {
+	if (!ret)
 		/* Timed out. */
-		zpa2326_warn(indio_dev, "no one shot interrupt occurred (%ld)",
-			     timeout);
 		ret = -ETIME;
-	} else if (timeout < 0) {
-		zpa2326_warn(indio_dev,
-			     "wait for one shot interrupt cancelled");
-		ret = -ERESTARTSYS;
-	}
+
+	if (ret != -ERESTARTSYS)
+		zpa2326_warn(indio_dev, "no one shot interrupt occurred (%d)",
+			     ret);
 
 	return ret;
 }

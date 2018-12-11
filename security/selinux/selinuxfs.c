@@ -42,7 +42,7 @@
 #include "conditional.h"
 
 /* Policy capability filenames */
-static char *policycap_names[] = {
+static HISI_SELINUX_PROT char *policycap_names[] = {
 	"network_peer_controls",
 	"open_perms",
 	"redhat1",

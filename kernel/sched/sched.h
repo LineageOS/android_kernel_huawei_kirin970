@@ -40,9 +40,15 @@ extern long calc_load_fold_active(struct rq *this_rq, long adjust);
 #ifdef CONFIG_SMP
 extern void cpu_load_update_active(struct rq *this_rq);
 extern void check_for_migration(struct rq *rq, struct task_struct *p);
+#ifdef CONFIG_HISI_RT_ACTIVE_LB
+extern void check_for_rt_migration(struct rq *rq, struct task_struct *p);
+#else
+static inline void check_for_rt_migration(struct rq *rq, struct task_struct *p) { }
+#endif
 #else
 static inline void cpu_load_update_active(struct rq *this_rq) { }
 static inline void check_for_migration(struct rq *rq, struct task_struct *p) { }
+static inline void check_for_rt_migration(struct rq *rq, struct task_struct *p) { }
 #endif
 
 #ifdef CONFIG_SCHED_SMT
@@ -379,6 +385,34 @@ struct cfs_bandwidth { };
 
 #endif	/* CONFIG_CGROUP_SCHED */
 
+#ifdef CONFIG_SCHED_HISI_TOP_TASK
+#define NUM_TRACKED_WINDOWS	2
+#define NUM_LOAD_INDICES	64
+#define SCHED_LOAD_GRANULE (walt_ravg_window / NUM_LOAD_INDICES)
+#define ZERO_LOAD_INDEX (NUM_LOAD_INDICES - 1)
+
+unsigned long top_task_util(struct rq *rq);
+void top_task_exit(struct task_struct *p, struct rq *rq);
+
+struct top_task_entry {
+	u8 count, preferidle_count;
+};
+#else /* !CONFIG_SCHED_HISI_TOP_TASK */
+static inline unsigned long top_task_util(struct rq *rq) { return 0; }
+static inline void top_task_exit(struct task_struct *p, struct rq *rq) {}
+#endif /* CONFIG_SCHED_HISI_TOP_TASK */
+
+#ifdef CONFIG_HISI_MIGRATION_NOTIFY
+#define DEFAULT_FREQ_INC_NOTIFY (200 * 1000)
+#define DEFAULT_FREQ_DEC_NOTIFY (200 * 1000)
+#endif
+
+#ifdef CONFIG_HISI_ED_TASK
+#define EARLY_DETECTION_TASK_WAITING_DURATION 11500000
+#define EARLY_DETECTION_TASK_RUNNING_DURATION 120000000
+#define EARLY_DETECTION_NEW_TASK_RUNNING_DURATION 100000000
+#endif
+
 /* CFS-related fields in a runqueue */
 struct cfs_rq {
 	struct load_weight load;
@@ -399,9 +433,7 @@ struct cfs_rq {
 	 */
 	struct sched_entity *curr, *next, *last, *skip;
 
-#ifdef	CONFIG_SCHED_DEBUG
 	unsigned int nr_spread_over;
-#endif
 
 #ifdef CONFIG_SMP
 	/*
@@ -569,10 +601,8 @@ struct root_domain {
 
 	/* Indicate more than one runnable task for any CPU */
 	bool overload;
-
 	/* Indicate one or more cpus over-utilized (tipping point) */
 	bool overutilized;
-
 	/*
 	 * The bit corresponding to a CPU gets set here if such CPU has more
 	 * than one runnable -deadline task (as it is below for RT tasks).
@@ -617,6 +647,43 @@ extern void sched_put_rd(struct root_domain *rd);
 extern void rto_push_irq_work_func(struct irq_work *work);
 #endif
 #endif /* CONFIG_SMP */
+
+
+#ifdef CONFIG_HISI_EAS_SCHED
+struct sched_cluster {
+	struct list_head list;
+	struct cpumask cpus;
+	int id;
+	int max_possible_capacity;
+	unsigned int cur_freq, max_freq, min_freq;
+	bool freq_init_done;
+	unsigned int capacity_margin;
+	unsigned int sd_capacity_margin;
+};
+
+extern struct list_head cluster_head;
+extern int num_clusters;
+extern struct sched_cluster init_cluster;
+
+extern void update_cluster_topology(void);
+extern void init_clusters(void);
+
+/* Iterate in increasing order of cluster max possible capacity */
+#define for_each_sched_cluster(cluster) \
+	list_for_each_entry(cluster, &cluster_head, list)
+
+#define for_each_sched_cluster_reverse(cluster) \
+	list_for_each_entry_reverse(cluster, &cluster_head, list)
+
+#define min_cap_cluster()	\
+	list_first_entry(&cluster_head, struct sched_cluster, list)
+#define max_cap_cluster()	\
+	list_last_entry(&cluster_head, struct sched_cluster, list)
+#else /* CONFIG_HISI_EAS_SCHED */
+static void update_cluster_topology(void) {}
+static void init_clusters(void) {}
+#endif /* CONFIG_HISI_EAS_SCHED */
+
 
 /*
  * This is the main, per-CPU runqueue data structure.
@@ -706,6 +773,14 @@ struct rq {
 	int push_cpu;
 	struct task_struct *push_task;
 	struct cpu_stop_work active_balance_work;
+
+	/* For rt active balancing */
+#ifdef CONFIG_HISI_RT_ACTIVE_LB
+	int rt_active_balance;
+	struct task_struct *rt_push_task;
+	struct cpu_stop_work rt_active_balance_work;
+#endif
+
 	/* cpu of this runqueue: */
 	int cpu;
 	int online;
@@ -721,7 +796,21 @@ struct rq {
 	u64 max_idle_balance_cost;
 #endif
 
+#ifdef CONFIG_HISI_EAS_SCHED
+	struct sched_cluster *cluster;
+#endif
+#ifdef CONFIG_HISI_ED_TASK
+	unsigned int ed_task_running_duration;
+	unsigned int ed_task_waiting_duration;
+	unsigned int ed_new_task_running_duration;
+#endif /* CONFIG_HISI_ED_TASK */
+#ifdef CONFIG_HISI_MIGRATION_NOTIFY
+	unsigned int freq_inc_notify;
+	unsigned int freq_dec_notify;
+#endif
+
 #ifdef CONFIG_SCHED_WALT
+	struct cpumask freq_domain_cpumask;
 	u64 cumulative_runnable_avg;
 	u64 window_start;
 	u64 curr_runnable_sum;
@@ -732,8 +821,29 @@ struct rq {
 	u64 avg_irqload;
 	u64 irqload_ts;
 	u64 cum_window_demand;
+
+#ifdef CONFIG_SCHED_HISI_TOP_TASK
+	DECLARE_BITMAP_ARRAY(top_tasks_bitmap,
+			NUM_TRACKED_WINDOWS, NUM_LOAD_INDICES);
+	struct top_task_entry *top_tasks[NUM_TRACKED_WINDOWS];
+	u8 curr_table;
+	int top_task_index[NUM_TRACKED_WINDOWS];
+
+	unsigned int top_task_hist_size;
+	unsigned int top_task_stats_policy;
+	bool top_task_stats_empty_window;
+#endif /* CONFIG_SCHED_HISI_TOP_TASK */
+
+	raw_spinlock_t walt_update_lock;
 #endif /* CONFIG_SCHED_WALT */
 
+#ifdef CONFIG_HISI_ED_TASK
+	struct task_struct *ed_task;
+#endif
+#ifdef CONFIG_HISI_CORE_CTRL
+	int nr_heavy_running;
+#endif
+	u64 group_load;
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -786,6 +896,12 @@ struct rq {
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state *idle_state;
 	int idle_state_idx;
+#endif
+#ifdef CONFIG_HW_VIP_THREAD
+	/*task list for vip thread*/
+	struct list_head vip_thread_list;
+	int active_vip_balance;
+	struct cpu_stop_work vip_balance_work;
 #endif
 };
 
@@ -1125,7 +1241,7 @@ extern struct static_key sched_feat_keys[__SCHED_FEAT_NR];
 #endif /* SCHED_DEBUG && HAVE_JUMP_LABEL */
 
 extern struct static_key_false sched_numa_balancing;
-extern struct static_key_false sched_schedstats;
+extern struct static_key_true sched_schedstats;
 
 static inline u64 global_rt_period(void)
 {
@@ -1464,11 +1580,18 @@ static inline void sched_update_tick_dependency(struct rq *rq)
 static inline void sched_update_tick_dependency(struct rq *rq) { }
 #endif
 
+#ifdef CONFIG_HISI_CORE_CTRL
+extern void core_ctl_update_nr_prod(struct rq *rq);
+#endif
+
 static inline void __add_nr_running(struct rq *rq, unsigned count)
 {
 	unsigned prev_nr = rq->nr_running;
 
 	rq->nr_running = prev_nr + count;
+#ifdef CONFIG_HISI_CORE_CTRL
+	core_ctl_update_nr_prod(rq);
+#endif
 
 	if (prev_nr < 2 && rq->nr_running >= 2) {
 #ifdef CONFIG_SMP
@@ -1483,6 +1606,9 @@ static inline void __add_nr_running(struct rq *rq, unsigned count)
 static inline void __sub_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running -= count;
+#ifdef CONFIG_HISI_CORE_CTRL
+	core_ctl_update_nr_prod(rq);
+#endif
 	/* Check if we still need preemption */
 	sched_update_tick_dependency(rq);
 }
@@ -1628,8 +1754,26 @@ static inline unsigned long capacity_orig_of(int cpu)
 }
 
 extern unsigned int sysctl_sched_use_walt_cpu_util;
+extern unsigned int sysctl_sched_use_walt_cpu_util_freq;
+#ifdef CONFIG_SCHED_HISI_WALT_WINDOW_SIZE_TUNABLE
 extern unsigned int walt_ravg_window;
 extern bool walt_disabled;
+#else
+extern const unsigned int walt_ravg_window;
+extern const bool walt_disabled;
+#endif
+
+#ifdef CONFIG_HISI_EAS_SCHED
+static inline unsigned long task_util(struct task_struct *p)
+{
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_task_util)
+		return p->ravg.demand /
+		       (walt_ravg_window >> SCHED_CAPACITY_SHIFT);
+#endif
+	return p->se.avg.util_avg;
+}
+#endif
 
 /*
  * cpu_util returns the amount of capacity of a CPU that is used by CFS
@@ -1663,7 +1807,7 @@ static inline unsigned long __cpu_util(int cpu, int delta)
 	unsigned long capacity = capacity_orig_of(cpu);
 
 #ifdef CONFIG_SCHED_WALT
-	if (!walt_disabled && sysctl_sched_use_walt_cpu_util) 
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util)
 		util = div64_u64(cpu_rq(cpu)->cumulative_runnable_avg,
 			       walt_ravg_window >> SCHED_CAPACITY_SHIFT);
 #endif
@@ -1679,13 +1823,32 @@ static inline unsigned long cpu_util(int cpu)
 	return __cpu_util(cpu, 0);
 }
 
+static inline unsigned long cpu_util_cum(int cpu, int delta)
+{
+	u64 util = cpu_rq(cpu)->cfs.avg.util_avg;
+	unsigned long capacity = capacity_orig_of(cpu);
+
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util) {
+		util = cpu_rq(cpu)->cum_window_demand;
+		util = div64_u64(util,
+				 walt_ravg_window >> SCHED_CAPACITY_SHIFT);
+	}
+#endif
+	delta += util;
+	if (delta < 0)
+		return 0;
+
+	return (delta >= capacity) ? capacity : delta;
+}
+
 static inline unsigned long cpu_util_freq(int cpu)
 {
 	unsigned long util = cpu_rq(cpu)->cfs.avg.util_avg;
 	unsigned long capacity = capacity_orig_of(cpu);
 
 #ifdef CONFIG_SCHED_WALT
-	if (!walt_disabled && sysctl_sched_use_walt_cpu_util)
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util_freq)
 		util = div64_u64(cpu_rq(cpu)->prev_runnable_sum,
 				 walt_ravg_window >> SCHED_CAPACITY_SHIFT);
 #endif
@@ -1733,6 +1896,11 @@ task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
 
 extern struct rq *lock_rq_of(struct task_struct *p, struct rq_flags *flags);
 extern void unlock_rq_of(struct rq *rq, struct task_struct *p, struct rq_flags *flags);
+
+#ifdef CONFIG_SMP
+bool __cpu_overutilized(int cpu, int delta);
+bool cpu_overutilized(int cpu);
+#endif
 
 #ifdef CONFIG_SMP
 #ifdef CONFIG_PREEMPT
@@ -1978,9 +2146,24 @@ static inline u64 irq_time_read(int cpu)
 	return total;
 }
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
+#ifdef CONFIG_SCHED_WALT
+extern u64 walt_ktime_clock(void);
+#endif
+
+static inline bool use_pelt_freq(void)
+{
+#ifdef CONFIG_SCHED_WALT
+	return (!sysctl_sched_use_walt_cpu_util_freq || walt_disabled);
+#else
+	return true;
+#endif
+}
 
 #ifdef CONFIG_CPU_FREQ
 DECLARE_PER_CPU(struct update_util_data *, cpufreq_update_util_data);
+#ifdef CONFIG_HISI_CPUFREQ
+DECLARE_PER_CPU(rwlock_t, update_util_data_lock);
+#endif
 
 /**
  * cpufreq_update_util - Take a note about CPU utilization changes.
@@ -2007,14 +2190,35 @@ DECLARE_PER_CPU(struct update_util_data *, cpufreq_update_util_data);
 static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 {
 	struct update_util_data *data;
+#ifdef CONFIG_SCHED_WALT
+	u64 clock = use_pelt_freq() ? rq_clock(rq) : walt_ktime_clock();
+#else
+	u64 clock = rq_clock(rq);
+#endif
 
+#ifdef CONFIG_HISI_CPUFREQ
+	rwlock_t *lock = &per_cpu(update_util_data_lock, cpu_of(rq));
+	if (!read_trylock(lock))
+		return;
+
+	data = per_cpu(cpufreq_update_util_data, cpu_of(rq));
+	if (data)
+		data->func(data, clock, flags);
+	read_unlock(lock);
+#else
 	data = rcu_dereference_sched(*this_cpu_ptr(&cpufreq_update_util_data));
 	if (data)
-		data->func(data, rq_clock(rq), flags);
+		data->func(data, clock, flags);
+#endif
 }
 
 static inline void cpufreq_update_this_cpu(struct rq *rq, unsigned int flags)
 {
+#ifdef CONFIG_HISI_CPU_FREQ_GOV_SCHEDUTIL
+	if (!use_pelt_freq())
+		return;
+#endif
+
 	if (cpu_of(rq) == smp_processor_id())
 		cpufreq_update_util(rq, flags);
 }
@@ -2032,7 +2236,20 @@ walt_task_in_cum_window_demand(struct rq *rq, struct task_struct *p)
 	       (p->on_rq || p->last_sleep_ts >= rq->window_start);
 }
 
+/* Is frequency of two cpus synchronized with each other? */
+static inline int same_freq_domain(int src_cpu, int dst_cpu)
+{
+	struct rq *rq = cpu_rq(src_cpu);
+
+	if (src_cpu == dst_cpu)
+		return 1;
+
+	return cpumask_test_cpu(dst_cpu, &rq->freq_domain_cpumask);
+}
 #endif /* CONFIG_SCHED_WALT */
+
+extern void clear_ed_task(struct task_struct *p, struct rq *rq);
+extern void migrate_ed_task(struct task_struct *p, struct rq *src_rq, struct rq *dest_rq);
 
 #ifdef arch_scale_freq_capacity
 #ifndef arch_scale_freq_invariant
@@ -2040,4 +2257,66 @@ walt_task_in_cum_window_demand(struct rq *rq, struct task_struct *p)
 #endif
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
+#endif
+
+/* bits in struct sugov_cpu flags field */
+enum {
+	WALT_WINDOW_ROLLOVER		= (1 << 0),
+	INTER_CLUSTER_MIGRATION_SRC	= (1 << 1),
+	INTER_CLUSTER_MIGRATION_DST	= (1 << 2),
+	ADD_TOP_TASK			= (1 << 3),
+	ADD_ED_TASK			= (1 << 4),
+	CLEAR_ED_TASK			= (1 << 5),
+	POLICY_MIN_RESTORE		= (1 << 6),
+	FORCE_UPDATE			= (1 << 7),
+};
+
+#ifdef CONFIG_HISI_CPU_FREQ_GOV_SCHEDUTIL
+extern unsigned int sched_io_is_busy;
+extern void sched_set_io_is_busy(int val);
+extern void sugov_mark_util_change(int cpu, unsigned int flags);
+extern void sugov_check_freq_update(int cpu);
+extern unsigned long boosted_freq_policy_util(int cpu);
+#else
+static inline void sched_set_io_is_busy(int val) {}
+static inline void sugov_mark_util_change(int cpu, unsigned int flags) {}
+static inline void sugov_check_freq_update(int cpu) {}
+static inline unsigned long boosted_freq_policy_util(int cpu) { return 0; }
+#endif
+
+#ifdef CONFIG_HISI_RTG
+int alloc_related_thread_groups(void);
+void init_task_rtg(struct task_struct *p);
+int sync_cgroup_colocation(struct task_struct *p, bool insert);
+int _sched_set_group_id(struct task_struct *p, unsigned int group_id);
+struct group_cpu_time *group_update_cpu_time(struct rq *rq, struct related_thread_group *grp);
+bool group_migrate_task(struct task_struct *p,struct rq *src_rq, struct rq *dest_rq);
+void sched_update_group_load(struct rq *rq);
+void sched_get_max_group_util(const struct cpumask *query_cpus, unsigned long *util, unsigned int *freq);
+
+extern void walt_update_task_ravg(struct task_struct *p, struct rq *rq, int event,
+		u64 wallclock, u64 irqtime);
+extern bool same_schedtune(struct task_struct *tsk1, struct task_struct *tsk2);
+void sched_update_rtg_tick(struct task_struct *p);
+#ifdef CONFIG_HISI_CGROUP_RTG
+void add_new_task_to_grp(struct task_struct *new);
+#else
+static inline void add_new_task_to_grp(struct task_struct *new) {}
+#endif
+static inline
+struct related_thread_group *task_related_thread_group(struct task_struct *p)
+{
+        return rcu_dereference(p->grp);
+}
+#else
+static inline int alloc_related_thread_groups(void) { return 0; }
+static inline void init_task_rtg(struct task_struct *p) {}
+static inline int sync_cgroup_colocation(struct task_struct *p, bool insert) { return 0; }
+static inline int _sched_set_group_id(struct task_struct *p, unsigned int group_id) { return 0; }
+static inline void add_new_task_to_grp(struct task_struct *new) {}
+static inline struct group_cpu_time *group_update_cpu_time(struct rq *rq, struct related_thread_group *grp) { return NULL; }
+static inline bool group_migrate_task(struct task_struct *p,struct rq *src_rq, struct rq *dest_rq) { return false; }
+static inline void sched_get_max_group_util(const struct cpumask *query_cpus, unsigned int *freq) {}
+static inline void sched_update_rtg_tick(struct task_struct *p) { return; }
+static inline struct related_thread_group *task_related_thread_group(struct task_struct *p) { return NULL; }
 #endif

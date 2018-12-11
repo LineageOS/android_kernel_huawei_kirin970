@@ -328,7 +328,7 @@
 #define INTE2_PLAYBACK_CH_3_HALF_LOOP 0x00000800 /* Playback Channel 3 half loop                          */
 #define INTE2_CAPTURE_CH_0_LOOP       0x00100000 /* Capture Channel 0 loop                               */
 #define INTE2_CAPTURE_CH_0_HALF_LOOP  0x00010000 /* Caputre Channel 0 half loop                          */
-#define HCFG2			0x34		/* Defaults: 0, win2000 sets it to 00004201 */
+#define HCFG2			0x34
 						/* 0x00000000 2-channel output. */
 						/* 0x00000200 8-channel output. */
 						/* 0x00000004 pauses stream/irq fail. */

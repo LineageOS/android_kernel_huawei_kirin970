@@ -13,7 +13,13 @@
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#ifdef CONFIG_HISI_CLK
+#include <linux/clkdev.h>
+#endif
 
+#ifdef CONFIG_HISI_CLK
+extern int IS_FPGA(void);
+#endif
 /*
  * DOC: basic fixed multiplier and divider clock that cannot gate
  *
@@ -62,10 +68,23 @@ static int clk_factor_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+static int hi3xxx_dumpfixed_factor(struct clk_hw *hw, char* buf)
+{
+	struct clk_fixed_factor *fix = to_clk_fixed_factor(hw);
+	if(buf)
+		snprintf(buf, DUMP_CLKBUFF_MAX_SIZE, "[%s] : fixed div value = %d\n", __clk_get_name(hw->clk), fix->div);
+	return 0;
+}
+#endif
+
 const struct clk_ops clk_fixed_factor_ops = {
 	.round_rate = clk_factor_round_rate,
 	.set_rate = clk_factor_set_rate,
 	.recalc_rate = clk_factor_recalc_rate,
+#ifdef CONFIG_HISI_CLK_DEBUG
+	.dump_reg = hi3xxx_dumpfixed_factor,
+#endif
 };
 EXPORT_SYMBOL_GPL(clk_fixed_factor_ops);
 
@@ -100,7 +119,7 @@ struct clk_hw *clk_hw_register_fixed_factor(struct device *dev,
 		hw = ERR_PTR(ret);
 	}
 
-	return hw;
+	return hw; /*lint !e593 */
 }
 EXPORT_SYMBOL_GPL(clk_hw_register_fixed_factor);
 
@@ -170,7 +189,23 @@ static struct clk *_of_fixed_factor_clk_setup(struct device_node *node)
 	}
 
 	of_property_read_string(node, "clock-output-names", &clk_name);
-	parent_name = of_clk_get_parent_name(node, 0);
+#ifdef CONFIG_HISI_CLK
+	if (IS_FPGA()) {
+		if (NULL != of_find_property(node, "clock-fpga", NULL)) {
+			if (of_property_read_string(node, "clock-fpga", &parent_name)) {
+				pr_err("[%s] %s node clock-fpga value is NULL!\n",
+					__func__, node->name);
+				return ERR_PTR(-EIO);
+			}
+		} else {
+			parent_name = of_clk_get_parent_name(node, 0);
+		}
+	} else {
+#endif
+		parent_name = of_clk_get_parent_name(node, 0);
+#ifdef CONFIG_HISI_CLK
+	}
+#endif
 
 	if (of_match_node(set_rate_parent_matches, node))
 		flags |= CLK_SET_RATE_PARENT;
@@ -186,6 +221,9 @@ static struct clk *_of_fixed_factor_clk_setup(struct device_node *node)
 		return ERR_PTR(ret);
 	}
 
+#ifdef CONFIG_HISI_CLK
+	clk_register_clkdev(clk, clk_name, NULL);
+#endif
 	return clk;
 }
 

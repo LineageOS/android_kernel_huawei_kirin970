@@ -173,11 +173,9 @@ ieee80211_rate_control_ops_get(const char *name)
 		/* try default if specific alg requested but not found */
 		ops = ieee80211_try_rate_control_ops_get(ieee80211_default_rc_algo);
 
-	/* Note: check for > 0 is intentional to avoid clang warning */
-	if (!ops && (strlen(CONFIG_MAC80211_RC_DEFAULT) > 0))
-		/* try built-in one if specific alg requested but not found */
+	/* try built-in one if specific alg requested but not found */
+	if (!ops && strlen(CONFIG_MAC80211_RC_DEFAULT))
 		ops = ieee80211_try_rate_control_ops_get(CONFIG_MAC80211_RC_DEFAULT);
-
 	kernel_param_unlock(THIS_MODULE);
 
 	return ops;
@@ -877,9 +875,7 @@ int rate_control_set_rates(struct ieee80211_hw *hw,
 	struct ieee80211_sta_rates *old;
 	struct ieee80211_supported_band *sband;
 
-	sband = ieee80211_get_sband(sta->sdata);
-	if (!sband)
-		return -EINVAL;
+	sband = hw->wiphy->bands[ieee80211_get_sdata_band(sta->sdata)];
 	rate_control_apply_mask_ratetbl(sta, sband, rates);
 	/*
 	 * mac80211 guarantees that this function will not be called

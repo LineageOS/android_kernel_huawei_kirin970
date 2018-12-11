@@ -8,6 +8,9 @@
 #include <linux/stddef.h>
 #include <linux/mm.h>
 #include <linux/mmzone.h>
+#ifdef CONFIG_TASK_PROTECT_LRU
+#include <linux/hisi/protect_lru.h>
+#endif
 
 struct pglist_data *first_online_pgdat(void)
 {
@@ -93,6 +96,9 @@ void lruvec_init(struct lruvec *lruvec)
 
 	for_each_lru(lru)
 		INIT_LIST_HEAD(&lruvec->lists[lru]);
+#ifdef CONFIG_TASK_PROTECT_LRU
+	protect_lruvec_init(lruvec);
+#endif
 }
 
 #if defined(CONFIG_NUMA_BALANCING) && !defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS)

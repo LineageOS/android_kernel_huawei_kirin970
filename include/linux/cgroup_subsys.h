@@ -12,6 +12,10 @@
 SUBSYS(cpuset)
 #endif
 
+#if IS_ENABLED(CONFIG_HW_CGROUP_PIDS)
+SUBSYS(pids)
+#endif
+
 #if IS_ENABLED(CONFIG_CGROUP_SCHED)
 SUBSYS(cpu)
 #endif
@@ -65,6 +69,18 @@ SUBSYS(pids)
  */
 #if IS_ENABLED(CONFIG_CGROUP_DEBUG)
 SUBSYS(debug)
+#endif
+
+#if IS_ENABLED(CONFIG_HW_CGROUP_IONICE)
+SUBSYS(ionice)
+#endif
+
+#if IS_ENABLED(CONFIG_CGROUP_IOLIMIT)
+SUBSYS(iolimit)
+#endif
+
+#if IS_ENABLED(CONFIG_HW_CGROUP_WORKINGSET)
+SUBSYS(workingset)
 #endif
 
 /*

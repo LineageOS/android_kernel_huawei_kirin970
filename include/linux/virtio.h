@@ -31,6 +31,9 @@ struct virtqueue {
 	struct virtio_device *vdev;
 	unsigned int index;
 	unsigned int num_free;
+#ifdef CONFIG_HISI_REMOTEPROC
+	dma_addr_t dma_base;
+#endif
 	void *priv;
 };
 
@@ -142,6 +145,9 @@ void virtio_config_changed(struct virtio_device *dev);
 int virtio_device_freeze(struct virtio_device *dev);
 int virtio_device_restore(struct virtio_device *dev);
 #endif
+
+#define virtio_device_for_each_vq(vdev, vq) \
+	list_for_each_entry(vq, &vdev->vqs, list)
 
 /**
  * virtio_driver - operations for a virtio I/O driver

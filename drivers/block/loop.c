@@ -1742,6 +1742,10 @@ static int loop_add(struct loop_device **l, int i)
 
 	/* allocate id, if @id >= 0, we're requesting that specific id */
 	if (i >= 0) {
+		if (i > (INT_MAX - 1)) {
+			pr_err("%s %d i: %d would overflow!\n", __func__, __LINE__, i);
+			goto out_free_dev;
+		}
 		err = idr_alloc(&loop_index_idr, lo, i, i + 1, GFP_KERNEL);
 		if (err == -ENOSPC)
 			err = -EEXIST;
@@ -1751,6 +1755,11 @@ static int loop_add(struct loop_device **l, int i)
 	if (err < 0)
 		goto out_free_dev;
 	i = err;
+
+	if (i >= (int)(1UL << MINORBITS)) {
+		err = -ERANGE;
+		goto out_free_idr;
+	}
 
 	err = -ENOMEM;
 	lo->tag_set.ops = &loop_mq_ops;
@@ -1780,8 +1789,10 @@ static int loop_add(struct loop_device **l, int i)
 
 	err = -ENOMEM;
 	disk = lo->lo_disk = alloc_disk(1 << part_shift);
-	if (!disk)
+	if (!disk) {
+		err = -ENOMEM;
 		goto out_free_queue;
+	}
 
 	/*
 	 * Disable partition scanning by default. The in-kernel partition

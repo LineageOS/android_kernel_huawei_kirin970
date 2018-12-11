@@ -101,6 +101,14 @@ config BLK_DEV_THROTTLING
 
 	See Documentation/cgroups/blkio-controller.txt for more information.
 
+config BLK_DEV_HI_PRIO_FOR_FG
+	bool "Block layer high priority for foreground requests support"
+	depends on BLK_DEV_THROTTLING=y
+	default n
+	---help---
+	Give high priority for foreground requests, reserve some tags for
+	forground requests to make sure these requests have low lantency.
+
 config BLK_CMDLINE_PARSER
 	bool "Block device command line partition parser"
 	default n
@@ -111,6 +119,122 @@ config BLK_CMDLINE_PARSER
 	partitions on a block device.
 
 	See Documentation/block/cmdline-partition.txt for more information.
+
+
+config HISI_BLOCK_FREQUENCE_CONTROL
+        bool "add ddr frequence request base on block layer."
+        depends on BLOCK
+        default n
+
+config MMC_BLOCK_IOMMU_64BIT
+        bool "Block bounce limit"
+        depends on BLOCK
+        default n
+        help
+        Blk-setting will use address >4G for IOMMU.
+
+config HISI_BLK
+	bool "HISI Block feature"
+	depends on BLOCK
+	default n
+	help
+		HISI Block feature
+		
+config HISI_BLK_DEBUG
+	bool "HISI Block Debug Mode"
+	depends on HISI_BLK
+	default n
+	help
+		HISI Block Debug Mode
+
+config HISI_BK_OPS
+	bool "HISI BKOPS"
+	depends on HISI_BLK
+	default n
+	help
+		HISI BKOPS feature
+
+config HISI_PARTITION
+        bool "hisi partition"
+        default n
+
+config HW_SYSTEM_WR_PROTECT
+	bool "write protection function of system partitions."
+	depends on BLOCK
+	default n
+
+config HISI_PARTITION_HI3650
+        bool "hi3650 partition"
+        depends on HISI_PARTITION
+        default n
+        help
+           config partition for hi3650 platform
+
+config HISI_PARTITION_HI6250
+        bool "hi6250 partition"
+        depends on HISI_PARTITION
+        default n
+        help
+           config partition for hi6250 platform
+
+config HISI_PARTITION_HI3660
+        bool "hi3660 partition"
+        depends on HISI_PARTITION
+        default n
+        help
+           config partition for hi3660 platform
+
+config HISI_PARTITION_CAPRICORN
+        bool "capricorn partition"
+        depends on HISI_PARTITION
+        default n
+        help
+          config partition for capricorn platform
+
+config HISI_PARTITION_LIBRA
+	bool "libra partition"
+	depends on HISI_PARTITION
+	default n
+	help
+	  config partition for libra platform
+
+config HISI_PARTITION_KIRIN970
+        bool "kirin970 partition"
+        depends on HISI_PARTITION
+        default n
+        help
+	  config partition for kirin970 platform
+
+config HISI_PARTITION_CANCER
+        bool "cancer partition"
+        depends on HISI_PARTITION
+        default n
+        help
+           config partition for cancer platform
+
+config HISI_PARTITION_TAURUS
+        bool "taurus partition"
+        depends on HISI_PARTITION
+        default n
+        help
+           config partition for taurus platform
+
+config MMC_BLOCK_IOMMU_64BIT
+	bool "Block bounce limit"
+	depends on BLOCK
+	default n
+	help
+	Blk-setting will use address >4G for IOMMU.
+
+config HISI_PARTITION
+	bool "hisi partition"
+	default n
+
+config HISI_AB_PARTITION
+        bool "AB partition support"
+        default n
+        help
+          Say Y here if storage uses ab partition table.
 
 menu "Partition Types"
 

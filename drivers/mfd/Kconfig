@@ -6,7 +6,7 @@ if HAS_IOMEM
 menu "Multifunction device drivers"
 
 config MFD_CORE
-	tristate
+	tristate "mfd core"
 	select IRQ_DOMAIN
 	default n
 
@@ -1606,6 +1606,123 @@ config MFD_STW481X
 	  Select this option to enable the STw481x chip driver used
 	  in various ST Microelectronics and ST-Ericsson embedded
 	  Nomadik series.
+
+config MFD_HISI_IP_CORE
+	tristate "Control HiSilicon system interior area Bus on and off"
+	depends on OF
+	help
+	  This driver control HiSilicon system interior area power management from atf.
+
+config HISI_IP_CORE
+	tristate "Control HiSilicon 950 system interior area"
+	depends on OF
+	help
+	  This driver control HiSilicon system interior area power management.
+
+config HISI_IP_PMIC
+	tristate "Control HiSilicon system interior area voltage"
+	depends on OF
+	help
+	  This driver control HiSilicon system interior area power management.
+
+config HISI_FREQ_AUTODOWN
+	tristate "Support HiSilicon Bus automatic frequency reduction"
+	depends on OF
+	help
+	  Bus automatic frequency reduction is a method for reducing power consumption
+	  of the chip is proposed, through the bus load automatically reduced frequency.
+
+config HISI_CHARGER_POWER
+	tristate "Hisi Charger Power"
+	depends on OF
+	help
+	  This driver including charger power.
+config HISI_PMIC
+	tristate "HiSilicon PMU/Codec IC"
+	depends on OF
+	help
+	  This driver supports HiSilicon Hisi power management and codec IC,
+	  including regulators, codec, ADCs, Coulomb counter, etc. Memory
+	  mapped I/O ports are the way of communication with it.
+
+config HISI_PMIC_PMU_SPMI
+	tristate "HiSilicon PMU/Codec IC and use spmi passageway"
+	depends on OF
+	depends on HISI_SPMI
+	help
+	  This driver supports HiSilicon Hisi power management and codec IC,
+	  including regulators, codec, ADCs, Coulomb counter, etc. Memory
+	  mapped I/O ports are the way of communication with it. and use spmi
+	  passageway read pmu address.
+
+config HISI_PMIC_DCXO
+	tristate "HiSilicon PMU DCXO cali"
+	depends on OF
+	depends on HISI_PMIC_PMU_SPMI
+	help
+	   For platform later than atlt, we put PMU dcxo c1 c2 calibration in fastboot.
+	   Earlier, modem do this in kernel init process, which can cause pmu's clock unstable.
+
+config HISI_HI6555V300_PMU
+        tristate "HiSilicon 6555v300 IC"
+        depends on OF
+        help
+          discriminate pmu ic for pmussi passageway.
+
+config HISI_HI6421V700_PMU
+        tristate "HiSilicon 6421v700 IC"
+        depends on OF
+        help
+          discriminate pmu ic for pmussi passageway.
+
+config HISI_6423_PMIC_PMU_SPMI
+	tristate "HiSilicon 6423 PMU/Codec IC and use spmi passageway"
+	depends on OF
+	depends on HISI_SPMI
+	help
+
+config HISI_HI6555V200_PMU
+        tristate "HiSilicon 6555v200 IC"
+        depends on OF
+        help
+          discriminate pmu ic for 6555v200 passageway.
+
+config HISI_HI6421V600_PMU
+	tristate "HiSilicon 6421v600 IC"
+	depends on OF
+	help
+	  discriminate pmu ic for pmussi passageway.
+
+config HISI_HI6421V500_PMU
+        tristate "HiSilicon 6421v500 IC"
+        depends on OF
+        help
+          discriminate pmu ic for 6421v500 passageway.
+
+config HISI_PMIC_MNTN
+	tristate "HiSilicon Pmic Mntn"
+	depends on OF
+	help
+	  This driver supports HiSilicon Hisi power management and codec IC,
+	  including regulators, codec, ADCs, Coulomb counter, etc. Memory
+	  mapped I/O ports are the way of communication with it.
+
+config HISI_PMIC_MNTN_SPMI
+	tristate "HiSilicon spmi pmic mntn"
+	depends on OF
+	depends on HISI_PMIC_PMU_SPMI
+	help
+	  This driver supports HiSilicon Hisi power management and codec IC,
+	  which passage is spmi,including regulators, codec, ADCs, Coulomb counter, etc.
+	  Memory mapped I/O ports are the way of communication with it.
+
+config HISI_VBAT_DROP_PRT
+	tristate "HiSilicon vbat drop protect"
+	depends on OF
+	depends on HISI_PMIC_PMU_SPMI
+	help
+	  This driver supports HiSilicon battery vol drop protect by auto reducing 
+	    cpu core frequency. 
 
 menu "Multimedia Capabilities Port drivers"
 	depends on ARCH_SA1100

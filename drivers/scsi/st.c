@@ -3413,10 +3413,7 @@ static int partition_tape(struct scsi_tape *STp, int size)
 		if (needs_format)  /* Leave the old value for HP DATs claiming SCSI_3 */
 			psd_cnt = 2;
 		if ((bp[pgo + PP_OFF_FLAGS] & PP_MSK_PSUM_UNITS) == PP_MSK_PSUM_UNITS) {
-			/* Use units scaling for large partitions if the device
-			 * suggests it and no precision lost. Required for IBM
-			 * TS1140/50 drives that don't support MB units.
-			 */
+			
 			if (size >= 1000 && (size % 1000) == 0) {
 				size /= 1000;
 				psum = PP_MSK_PSUM_UNITS;

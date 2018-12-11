@@ -40,7 +40,7 @@ u32 bcom_fec_rx_task[] = {
 	0x60140002, /*     DRD2A: EU0=0 EU1=0 EU2=0 EU3=2 EXT init=0 WS=2 RS=2 */
 	0x0cccfcca, /*     DRD2B1: *idx3 = EU3(); EU3(*idx3,var10)  */
 	0x80004000, /*   LCDEXT: idx2 = 0x00000000; ; */
-	0xb8c58029, /*   LCD: idx3 = *(idx1 + var00000015); idx3 once var0; idx3 += inc5 */
+	0xb8c58029,
 	0x60000002, /*     DRD2A: EU0=0 EU1=0 EU2=0 EU3=2 EXT init=0 WS=0 RS=0 */
 	0x088cf8cc, /*     DRD2B1: idx2 = EU3(); EU3(idx3,var12)  */
 	0x991982f2, /*   LCD: idx2 = idx2, idx3 = idx3; idx2 > var11; idx2 += inc6, idx3 += inc2 */

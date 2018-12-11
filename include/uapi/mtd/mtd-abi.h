@@ -21,6 +21,7 @@
 #define __MTD_ABI_H__
 
 #include <linux/types.h>
+#include <linux/mtd/hisi_nve_interface.h>
 
 struct erase_info_user {
 	__u32 start;
@@ -203,6 +204,9 @@ struct otp_info {
  * without OOB, e.g., NOR flash.
  */
 #define MEMWRITE		_IOWR('M', 24, struct mtd_write_req)
+/*add begin,used for NV.*/
+#define NVEACCESSDATA           _IOWR('M', 25, struct hisi_nve_info_user)
+/*add end,used for NV.*/
 
 /*
  * Obsolete legacy interface. Keep it in order not to break userspace

@@ -97,6 +97,7 @@ int gic_configure_irq(unsigned int irq, unsigned int type,
 	return ret;
 }
 
+extern u32 gic_bugfix_flag;
 void gic_dist_config(void __iomem *base, int gic_irqs,
 		     void (*sync_access)(void))
 {
@@ -115,17 +116,18 @@ void gic_dist_config(void __iomem *base, int gic_irqs,
 	for (i = 32; i < gic_irqs; i += 4)
 		writel_relaxed(GICD_INT_DEF_PRI_X4, base + GIC_DIST_PRI + i);
 
-	/*
-	 * Deactivate and disable all SPIs. Leave the PPI and SGIs
-	 * alone as they are in the redistributor registers on GICv3.
-	 */
-	for (i = 32; i < gic_irqs; i += 32) {
-		writel_relaxed(GICD_INT_EN_CLR_X32,
-			       base + GIC_DIST_ACTIVE_CLEAR + i / 8);
-		writel_relaxed(GICD_INT_EN_CLR_X32,
-			       base + GIC_DIST_ENABLE_CLEAR + i / 8);
+	if (!gic_bugfix_flag) {
+		/*
+		 * Deactivate and disable all SPIs. Leave the PPI and SGIs
+		 * alone as they are in the redistributor registers on GICv3.
+		 */
+		for (i = 32; i < gic_irqs; i += 32) {
+			writel_relaxed(GICD_INT_EN_CLR_X32,
+				       base + GIC_DIST_ACTIVE_CLEAR + i / 8);
+			writel_relaxed(GICD_INT_EN_CLR_X32,
+				       base + GIC_DIST_ENABLE_CLEAR + i / 8);
+		}
 	}
-
 	if (sync_access)
 		sync_access();
 }

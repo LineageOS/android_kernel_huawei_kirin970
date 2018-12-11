@@ -3273,7 +3273,7 @@ static int __igb_close(struct net_device *netdev, bool suspending)
 
 int igb_close(struct net_device *netdev)
 {
-	if (netif_device_present(netdev) || netdev->dismantle)
+	if (netif_device_present(netdev))
 		return __igb_close(netdev, false);
 	return 0;
 }

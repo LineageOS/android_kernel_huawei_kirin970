@@ -278,17 +278,17 @@ field##_show(struct device *dev,					\
 }
 
 /* for more info, see Documentation/ABI/testing/sysfs-bus-rpmsg */
-rpmsg_show_attr(name, id.name, "%s\n");
-rpmsg_show_attr(src, src, "0x%x\n");
-rpmsg_show_attr(dst, dst, "0x%x\n");
-rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
+rpmsg_show_attr(name, id.name, "%s\n");/*lint !e421*/
+rpmsg_show_attr(src, src, "0x%x\n");/*lint !e421*/
+rpmsg_show_attr(dst, dst, "0x%x\n");/*lint !e421*/
+rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");/*lint !e421 !e665*/
 
 static ssize_t modalias_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	struct rpmsg_device *rpdev = to_rpmsg_device(dev);
 
-	return sprintf(buf, RPMSG_DEVICE_MODALIAS_FMT "\n", rpdev->id.name);
+	return sprintf(buf, RPMSG_DEVICE_MODALIAS_FMT "\n", rpdev->id.name);/*lint !e421*/
 }
 
 static struct device_attribute rpmsg_dev_attrs[] = {

@@ -50,6 +50,11 @@
 #define ECRYPTFS_MAX_NUM_USERS 32768
 #define ECRYPTFS_XATTR_NAME "user.ecryptfs"
 
+#ifdef CONFIG_ECRYPT_FS_FILTER
+#define ENC_FOLDER_FILTER_MAX_INSTANCE 5
+#define ENC_FOLDER_FILTER_MAX_LEN 256
+#endif
+
 void ecryptfs_dump_auth_tok(struct ecryptfs_auth_tok *auth_tok);
 extern void ecryptfs_to_hex(char *dst, char *src, size_t src_size);
 extern void ecryptfs_from_hex(char *dst, char *src, int dst_size);
@@ -343,6 +348,10 @@ struct ecryptfs_mount_crypt_stat {
 #define ECRYPTFS_GLOBAL_ENCFN_USE_MOUNT_FNEK   0x00000020
 #define ECRYPTFS_GLOBAL_ENCFN_USE_FEK          0x00000040
 #define ECRYPTFS_GLOBAL_MOUNT_AUTH_TOK_ONLY    0x00000080
+#ifdef CONFIG_ECRYPT_FS_FILTER
+#define ECRYPTFS_ENABLE_FILTERING              0x00000100
+#endif
+
 	u32 flags;
 	struct list_head global_auth_tok_list;
 	struct mutex global_auth_tok_list_mutex;
@@ -353,6 +362,9 @@ struct ecryptfs_mount_crypt_stat {
 	unsigned char global_default_fn_cipher_name[
 		ECRYPTFS_MAX_CIPHER_NAME_SIZE + 1];
 	char global_default_fnek_sig[ECRYPTFS_SIG_SIZE_HEX + 1];
+#ifdef CONFIG_ECRYPT_FS_FILTER
+        char enc_filter_folder_name[ENC_FOLDER_FILTER_MAX_INSTANCE][ENC_FOLDER_FILTER_MAX_LEN+1];
+#endif
 };
 
 /* superblock private data. */
@@ -724,7 +736,9 @@ int ecryptfs_set_f_namelen(long *namelen, long lower_namelen,
 			   struct ecryptfs_mount_crypt_stat *mount_crypt_stat);
 int ecryptfs_derive_iv(char *iv, struct ecryptfs_crypt_stat *crypt_stat,
 		       loff_t offset);
-
+#ifdef CONFIG_ECRYPT_FS_FILTER
+extern bool is_file_dir_match(struct ecryptfs_mount_crypt_stat *mcs,struct dentry *fp_dentry);
+#endif
 extern const struct xattr_handler *ecryptfs_xattr_handlers[];
 
 #endif /* #ifndef ECRYPTFS_KERNEL_H */

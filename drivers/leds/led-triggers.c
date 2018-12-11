@@ -21,6 +21,7 @@
 #include <linux/leds.h>
 #include <linux/slab.h>
 #include "leds.h"
+/*lint -e* */
 
 /*
  * Nests outside led_cdev->trigger_lock

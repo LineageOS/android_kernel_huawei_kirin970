@@ -327,7 +327,7 @@ int tpm2_pcr_extend(struct tpm_chip *chip, int pcr_idx, const u8 *hash)
 	cmd.params.pcrextend_in.auth_area.attributes = 0;
 	cmd.params.pcrextend_in.auth_area.auth_size = 0;
 	cmd.params.pcrextend_in.digest_cnt = cpu_to_be32(1);
-	cmd.params.pcrextend_in.hash_alg = cpu_to_be16(TPM2_ALG_SHA1);
+	cmd.params.pcrextend_in.hash_alg = cpu_to_be16(TPM2_ALG_SHA256);
 	memcpy(cmd.params.pcrextend_in.digest, hash, TPM_DIGEST_SIZE);
 
 	rc = tpm_transmit_cmd(chip, &cmd, sizeof(cmd), 0,
@@ -668,11 +668,6 @@ static int tpm2_unseal_cmd(struct tpm_chip *chip,
 	if (!rc) {
 		data_len = be16_to_cpup(
 			(__be16 *) &buf.data[TPM_HEADER_SIZE + 4]);
-		if (data_len < MIN_KEY_SIZE ||  data_len > MAX_KEY_SIZE + 1) {
-			rc = -EFAULT;
-			goto out;
-		}
-
 		data = &buf.data[TPM_HEADER_SIZE + 6];
 
 		memcpy(payload->key, data, data_len - 1);
@@ -680,7 +675,6 @@ static int tpm2_unseal_cmd(struct tpm_chip *chip,
 		payload->migratable = data[data_len - 1];
 	}
 
-out:
 	tpm_buf_destroy(&buf);
 	return rc;
 }

@@ -612,6 +612,7 @@ static ssize_t usb_device_read(struct file *file, char __user *buf,
 	ssize_t ret, total_written = 0;
 	loff_t skip_bytes = *ppos;
 	int id;
+	unsigned long jiffies_expire = jiffies + HZ;
 
 	if (*ppos < 0)
 		return -EINVAL;
@@ -620,23 +621,46 @@ static ssize_t usb_device_read(struct file *file, char __user *buf,
 	if (!access_ok(VERIFY_WRITE, buf, nbytes))
 		return -EFAULT;
 
-	mutex_lock(&usb_bus_idr_lock);
+	/* mutex_lock(&usb_bus_idr_lock); */
+	while (!mutex_trylock(&usb_bus_idr_lock)) {
+
+		/* If we can't acquire the lock after waiting one second,
+		 * we're probably deadlocked */
+		if (time_after(jiffies, jiffies_expire)) {
+			pr_err("%s:get usb_bus_idr_lock timeout, probably deadlocked\n",
+					__func__);
+			return -EFAULT;
+		}
+		msleep(20);
+	}
+
 	/* print devices for all busses */
 	idr_for_each_entry(&usb_bus_idr, bus, id) {
 		/* recurse through all children of the root hub */
 		if (!bus_to_hcd(bus)->rh_registered)
 			continue;
-		usb_lock_device(bus->root_hub);
+
+		jiffies_expire = jiffies + HZ;
+		while (!usb_trylock_device(bus->root_hub)) {
+
+			/* If we can't acquire the lock after waiting one second,
+			 * we're probably deadlocked */
+			if (time_after(jiffies, jiffies_expire)) {
+				mutex_unlock(&usb_bus_idr_lock);/*lint !e455*/
+				return -EFAULT;
+			}
+			msleep(20);
+		}
 		ret = usb_device_dump(&buf, &nbytes, &skip_bytes, ppos,
 				      bus->root_hub, bus, 0, 0, 0);
 		usb_unlock_device(bus->root_hub);
 		if (ret < 0) {
-			mutex_unlock(&usb_bus_idr_lock);
+			mutex_unlock(&usb_bus_idr_lock);/*lint !e455*/
 			return ret;
 		}
 		total_written += ret;
 	}
-	mutex_unlock(&usb_bus_idr_lock);
+	mutex_unlock(&usb_bus_idr_lock);/*lint !e455*/
 	return total_written;
 }
 

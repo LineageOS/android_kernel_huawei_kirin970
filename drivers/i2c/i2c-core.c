@@ -1165,7 +1165,11 @@ static int i2c_check_mux_children(struct device *dev, void *addrp)
 	return result;
 }
 
+#ifdef CONFIG_HUAWEI_TS
+int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
+#else
 static int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
+#endif
 {
 	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
 	int result = 0;

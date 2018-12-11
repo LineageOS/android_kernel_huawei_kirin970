@@ -13,6 +13,11 @@
  */
 struct genl_multicast_group {
 	char			name[GENL_NAMSIZ];
+#ifdef CONFIG_BCMDHD
+	struct genl_family	*family;	/* private */
+	struct list_head	list;		/* private */
+	u32			id;
+#endif
 };
 
 struct genl_ops;

@@ -18,6 +18,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/arm-smccc.h>
 #include <linux/init.h>
 #include <linux/linkage.h>
 
@@ -30,13 +31,12 @@
 #include <asm/irq.h>
 #include <asm/memory.h>
 #include <asm/mmu.h>
-#include <asm/processor.h>
 #include <asm/ptrace.h>
+#include <asm/processor.h>
 #include <asm/thread_info.h>
 #include <asm/uaccess.h>
 #include <asm/asm-uaccess.h>
 #include <asm/unistd.h>
-#include <asm/kernel-pgtable.h>
 
 /*
  * Context tracking subsystem.  Used to instrument transitions
@@ -64,6 +64,18 @@
 #endif
 	.endm
 
+	// This macro corrupts x0-x3. It is the caller's duty
+	// to save/restore them if required.
+	.macro	apply_ssbd, state, targ, tmp1, tmp2
+#ifdef CONFIG_ARM64_SSBD
+	nop
+	ldr_this_cpu	\tmp2, arm64_ssbd_callback_required, \tmp1
+	cbz	\tmp2, \targ
+	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_2
+	mov	w1, #\state
+	smc #0
+#endif
+	.endm
 /*
  * Bad Abort numbers
  *-----------------
@@ -73,6 +85,59 @@
 #define BAD_FIQ		2
 #define BAD_ERROR	3
 
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+	.macro bigcpus_kernel_ventry, el, label, regsize = 64, check = 0
+	.align 7
+#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
+alternative_if ARM64_UNMAP_KERNEL_AT_EL0
+	.if	\el == 0
+	.if	\regsize == 64
+	mrs	x30, tpidrro_el0
+	msr	tpidrro_el0, xzr
+	.else
+	mov	x30, xzr
+	.endif
+	.endif
+alternative_else_nop_endif
+#endif
+
+	sub	sp, sp, #S_FRAME_SIZE
+
+	/* check pmu for wa 2*/
+	.if \check == 1
+	stp	x18, x19, [sp, #16 * 9]
+	stp	x20, x21, [sp, #16 * 10]
+	stp	x22, x23, [sp, #16 * 11]
+	stp	x24, x25, [sp, #16 * 12]
+	stp	x26, x27, [sp, #16 * 13]
+	stp	x28, x29, [sp, #16 * 14]
+
+	.if	\el == 0
+	/* workaround 2 begin */
+	mov x19, xzr
+	ldr_this_cpu x29, pmu_counter, x20
+	msr pmselr_el0, x29
+	isb
+	mrs x20, pmxevcntr_el0
+	isb
+	cbnz x19, 1000f
+1000:
+	isb
+	mrs x21, pmxevcntr_el0
+	isb
+	cmp x20, x21
+	cset x29, ne
+
+	adr_l	x19, v2_apply
+	mrs	x21, tpidr_el1
+	str x29, [x19, x21]
+	/* workaround 2 end */
+	.endif //end el == 0
+	.endif //end check == 1
+
+	b	el\()\el\()_\label
+	.endm
+#endif
 	.macro kernel_ventry, el, label, regsize = 64
 	.align 7
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
@@ -96,6 +161,129 @@ alternative_else_nop_endif
 	mov_q	\dst, TRAMP_VALIAS
 	add	\dst, \dst, #(\sym - .entry.tramp.text)
 	.endm
+
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+	.macro	bigcpus_kernel_entry, el, regsize = 64, checked = 0
+	.if	\regsize == 32
+	mov	w0, w0				// zero upper 32 bits of x0
+	.endif
+	.if \checked == 0
+	stp	x0, x1, [sp, #16 * 0]
+	stp	x2, x3, [sp, #16 * 1]
+	stp	x4, x5, [sp, #16 * 2]
+	stp	x6, x7, [sp, #16 * 3]
+	stp	x8, x9, [sp, #16 * 4]
+	stp	x10, x11, [sp, #16 * 5]
+	stp	x12, x13, [sp, #16 * 6]
+	stp	x14, x15, [sp, #16 * 7]
+	stp	x16, x17, [sp, #16 * 8]
+	stp	x18, x19, [sp, #16 * 9]
+	stp	x20, x21, [sp, #16 * 10]
+	stp	x22, x23, [sp, #16 * 11]
+	stp	x24, x25, [sp, #16 * 12]
+	stp	x26, x27, [sp, #16 * 13]
+	stp	x28, x29, [sp, #16 * 14]
+	.else
+	stp	x0, x1, [sp, #16 * 0]
+	stp	x2, x3, [sp, #16 * 1]
+	stp	x4, x5, [sp, #16 * 2]
+	stp	x6, x7, [sp, #16 * 3]
+	stp	x8, x9, [sp, #16 * 4]
+	stp	x10, x11, [sp, #16 * 5]
+	stp	x12, x13, [sp, #16 * 6]
+	stp	x14, x15, [sp, #16 * 7]
+	stp	x16, x17, [sp, #16 * 8]
+	.endif
+
+	.if	\el == 0
+	mrs	x21, sp_el0
+	ldr_this_cpu	tsk, __entry_task, x20	// Ensure MDSCR_EL1.SS is clear,
+	ldr	x19, [tsk, #TSK_TI_FLAGS]	// since we can unmask debug
+	disable_step_tsk x19, x20		// exceptions when scheduling.
+
+	apply_ssbd 1, 1f, x22, x23
+
+#ifdef CONFIG_ARM64_SSBD
+	ldp	x0, x1, [sp, #16 * 0]
+	ldp	x2, x3, [sp, #16 * 1]
+#endif
+1:
+
+	mov	x29, xzr			// fp pointed to user-space
+	.else
+	add	x21, sp, #S_FRAME_SIZE
+	get_thread_info tsk
+	/* Save the task's original addr_limit and set USER_DS */
+	ldr	x20, [tsk, #TSK_TI_ADDR_LIMIT]
+	str	x20, [sp, #S_ORIG_ADDR_LIMIT]
+#ifdef CONFIG_HISI_HHEE
+	ldr	w2, [tsk, #THREAD_PID]
+
+	adrp	x1, hkip_addr_limit_bits	// page aligned
+	lsr	w0, w2, #3
+	ldrb	w0, [x1, w0, uxtw]
+	str	w2, [sp, #S_ORIG_ADDR_LIMIT_HKIP]
+	str	w0, [sp, #(S_ORIG_ADDR_LIMIT_HKIP + 4)]
+#endif
+	mov	x20, #USER_DS
+	str	x20, [tsk, #TSK_TI_ADDR_LIMIT]
+	/* No need to reset PSTATE.UAO, hardware's already set it to 0 for us */
+	.endif /* \el == 0 */
+	mrs	x22, elr_el1
+	mrs	x23, spsr_el1
+	stp	lr, x21, [sp, #S_LR]
+
+#ifdef CONFIG_ARM64_SW_TTBR0_PAN
+	/*
+	 * Set the TTBR0 PAN bit in SPSR. When the exception is taken from
+	 * EL0, there is no need to check the state of TTBR0_EL1 since
+	 * accesses are always enabled.
+	 * Note that the meaning of this bit differs from the ARMv8.1 PAN
+	 * feature as all TTBR0_EL1 accesses are disabled, not just those to
+	 * user mappings.
+	 */
+alternative_if ARM64_HAS_PAN
+	b	1f				// skip TTBR0 PAN
+alternative_else_nop_endif
+
+	.if	\el != 0
+	mrs	x21, ttbr0_el1
+	tst	x21, #TTBR_ASID_MASK		// Check for the reserved ASID
+	orr	x23, x23, #PSR_PAN_BIT		// Set the emulated PAN in the saved SPSR
+	b.eq	1f				// TTBR0 access already disabled
+	and	x23, x23, #~PSR_PAN_BIT		// Clear the emulated PAN in the saved SPSR
+	.endif
+
+	__uaccess_ttbr0_disable x21
+1:
+#endif
+
+	stp	x22, x23, [sp, #S_PC]
+
+	/*
+	 * Set syscallno to -1 by default (overridden later if real syscall).
+	 */
+	.if	\el == 0
+	mvn	x21, xzr
+	str	x21, [sp, #S_SYSCALLNO]
+	.endif
+
+	/*
+	 * Set sp_el0 to current thread_info.
+	 */
+	.if	\el == 0
+	msr	sp_el0, tsk
+	.endif
+
+	/*
+	 * Registers that may be useful after this macro is invoked:
+	 *
+	 * x21 - aborted SP
+	 * x22 - aborted PC
+	 * x23 - aborted PSTATE
+	*/
+	.endm
+#endif
 
 	.macro	kernel_entry, el, regsize = 64
 	.if	\regsize == 32
@@ -123,6 +311,14 @@ alternative_else_nop_endif
 	ldr	x19, [tsk, #TSK_TI_FLAGS]	// since we can unmask debug
 	disable_step_tsk x19, x20		// exceptions when scheduling.
 
+	apply_ssbd 1, 1f, x22, x23
+
+#ifdef CONFIG_ARM64_SSBD
+	ldp	x0, x1, [sp, #16 * 0]
+	ldp	x2, x3, [sp, #16 * 1]
+#endif
+1:
+
 	mov	x29, xzr			// fp pointed to user-space
 	.else
 	add	x21, sp, #S_FRAME_SIZE
@@ -130,6 +326,15 @@ alternative_else_nop_endif
 	/* Save the task's original addr_limit and set USER_DS */
 	ldr	x20, [tsk, #TSK_TI_ADDR_LIMIT]
 	str	x20, [sp, #S_ORIG_ADDR_LIMIT]
+#ifdef CONFIG_HISI_HHEE
+	ldr	w2, [tsk, #THREAD_PID]
+
+	adrp	x1, hkip_addr_limit_bits	// page aligned
+	lsr	w0, w2, #3
+	ldrb	w0, [x1, w0, uxtw]
+	str	w2, [sp, #S_ORIG_ADDR_LIMIT_HKIP]
+	str	w0, [sp, #(S_ORIG_ADDR_LIMIT_HKIP + 4)]
+#endif
 	mov	x20, #USER_DS
 	str	x20, [tsk, #TSK_TI_ADDR_LIMIT]
 	/* No need to reset PSTATE.UAO, hardware's already set it to 0 for us */
@@ -192,6 +397,32 @@ alternative_else_nop_endif
 	.macro	kernel_exit, el
 	.if	\el != 0
 	/* Restore the task's original addr_limit. */
+#ifdef CONFIG_HISI_HHEE
+	ldr	w2, [sp, #S_ORIG_ADDR_LIMIT_HKIP]
+	cbz	w2, 1f				// ultra-fast path: idle task
+	ldr	w3, [sp, #(S_ORIG_ADDR_LIMIT_HKIP + 4)]
+	adrp	x1, hkip_addr_limit_bits	// page aligned
+	lsr	w0, w2, #3
+	ldrb	w0, [x1, w0, uxtw]
+	cmp	w0, w3
+	b.eq	1f				// fast path: compare byte
+
+	eor	w0, w0, w3
+	and	w4, w2, #7
+	lsr	w0, w0, w4
+	tbz	w0, #0, 1f			// slow path: compare bit
+
+	movz	w0, #0x1050
+	lsr	w3, w3, w4
+	movk	w0, #0xC600, lsl #16
+	and	w3, w3, #1
+alternative_if_not ARM64_HAS_HHEE
+	bl	hkip_hvc_dispatch
+alternative_else
+	hvc	#0
+alternative_endif
+1:
+#endif
 	ldr	x20, [sp, #S_ORIG_ADDR_LIMIT]
 	str	x20, [tsk, #TSK_TI_ADDR_LIMIT]
 
@@ -251,6 +482,8 @@ alternative_if ARM64_WORKAROUND_845719
 alternative_else_nop_endif
 #endif
 3:
+	apply_ssbd 0, 5f, x0, x1
+5:
 	.endif
 
 	msr	elr_el1, x21			// set up the return data
@@ -357,7 +590,7 @@ tsk	.req	x28		// current thread_info
 	.pushsection ".entry.text", "ax"
 
 	.align	11
-ENTRY(vectors)
+ENTRY_NOTAG(vectors)
 	kernel_ventry	1, sync_invalid			// Synchronous EL1t
 	kernel_ventry	1, irq_invalid			// IRQ EL1t
 	kernel_ventry	1, fiq_invalid			// FIQ EL1t
@@ -365,18 +598,30 @@ ENTRY(vectors)
 
 	kernel_ventry	1, sync				// Synchronous EL1h
 	kernel_ventry	1, irq				// IRQ EL1h
+#ifdef CONFIG_HISI_FIQ
+	kernel_ventry	1, fiq			        // FIQ EL1h
+#else
 	kernel_ventry	1, fiq_invalid			// FIQ EL1h
+#endif
 	kernel_ventry	1, error_invalid		// Error EL1h
 
 	kernel_ventry	0, sync				// Synchronous 64-bit EL0
 	kernel_ventry	0, irq				// IRQ 64-bit EL0
+#ifdef CONFIG_HISI_FIQ
+	kernel_ventry	0, fiq            		// FIQ 64-bit EL0
+#else
 	kernel_ventry	0, fiq_invalid			// FIQ 64-bit EL0
+#endif
 	kernel_ventry	0, error_invalid		// Error 64-bit EL0
 
 #ifdef CONFIG_COMPAT
 	kernel_ventry	0, sync_compat, 32		// Synchronous 32-bit EL0
 	kernel_ventry	0, irq_compat, 32		// IRQ 32-bit EL0
+#ifdef CONFIG_HISI_FIQ
+	kernel_ventry	0, fiq_compat, 32	        // FIQ 32-bit EL0
+#else
 	kernel_ventry	0, fiq_invalid_compat, 32	// FIQ 32-bit EL0
+#endif
 	kernel_ventry	0, error_invalid_compat, 32	// Error 32-bit EL0
 #else
 	kernel_ventry	0, sync_invalid, 32		// Synchronous 32-bit EL0
@@ -459,6 +704,10 @@ el1_sync:
 	b.eq	el1_sp_pc
 	cmp	x24, #ESR_ELx_EC_UNKNOWN	// unknown exception in EL1
 	b.eq	el1_undef
+#ifdef CONFIG_TLB_CONFLICT_WORKAROUND
+	cmp	x24, #ESR_ELx_EC_IABT_CUR	// IABT (current EL)
+	b.eq	el1_iabt_curr_el
+#endif
 	cmp	x24, #ESR_ELx_EC_BREAKPT_CUR	// debug exception in EL1
 	b.ge	el1_dbg
 	b	el1_inv
@@ -517,6 +766,13 @@ el1_inv:
 	mov	x2, x1
 	mov	x1, #BAD_SYNC
 	b	bad_mode
+#ifdef CONFIG_TLB_CONFLICT_WORKAROUND
+el1_iabt_curr_el:
+	mrs	x0, far_el1
+	mov	x2, sp
+	bl	do_iabt_curr_el
+	kernel_exit 1
+#endif
 ENDPROC(el1_sync)
 
 	.align	6
@@ -551,7 +807,284 @@ el1_preempt:
 	tbnz	x0, #TIF_NEED_RESCHED, 1b	// needs rescheduling?
 	ret	x24
 #endif
+#ifdef CONFIG_HISI_FIQ
+el1_fiq:
+	kernel_entry 1
+	mov	x0, sp
+	mrs	x1, esr_el1
+	b	fiq_dump
+ENDPROC(el1_fiq)
+#endif
 
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+/*
+ * Exception vectors.
+ */
+	.pushsection ".entry.text", "ax"
+
+	.align	11
+ENTRY_NOTAG(bigcpus_vectors)
+	kernel_ventry	1, sync_invalid			// Synchronous EL1t
+	kernel_ventry	1, irq_invalid			// IRQ EL1t
+	kernel_ventry	1, fiq_invalid			// FIQ EL1t
+	kernel_ventry	1, error_invalid		// Error EL1t
+
+	kernel_ventry	1, sync				// Synchronous EL1h
+	kernel_ventry	1, irq				// IRQ EL1h
+#ifdef CONFIG_HISI_FIQ
+	kernel_ventry	1, fiq			        // FIQ EL1h
+#else
+	kernel_ventry	1, fiq_invalid			// FIQ EL1h
+#endif
+	kernel_ventry	1, error_invalid		// Error EL1h
+
+	bigcpus_kernel_ventry	0, bigcpus_sync, 64, 1			// Synchronous 64-bit EL0
+	bigcpus_kernel_ventry	0, bigcpus_irq, 64, 1			// IRQ 64-bit EL0
+#ifdef CONFIG_HISI_FIQ
+	bigcpus_kernel_ventry	0, bigcpus_fiq, 64, 1            		// FIQ 64-bit EL0
+#else
+	kernel_ventry	0, fiq_invalid			// FIQ 64-bit EL0
+#endif
+	kernel_ventry	0, error_invalid		// Error 64-bit EL0
+
+#ifdef CONFIG_COMPAT
+	bigcpus_kernel_ventry	0, bigcpus_sync_compat, 32, 1		// Synchronous 32-bit EL0
+	bigcpus_kernel_ventry	0, bigcpus_irq_compat, 32, 1		// IRQ 32-bit EL0
+#ifdef CONFIG_HISI_FIQ
+	bigcpus_kernel_ventry	0, bigcpus_fiq_compat, 32, 1	        // FIQ 32-bit EL0
+#else
+	kernel_ventry	0, fiq_invalid_compat, 32	// FIQ 32-bit EL0
+#endif
+	kernel_ventry	0, error_invalid_compat, 32	// Error 32-bit EL0
+#else
+	kernel_ventry	0, sync_invalid, 32	// Synchronous 32-bit EL0
+	kernel_ventry	0, irq_invalid, 32		// IRQ 32-bit EL0
+	kernel_ventry	0, fiq_invalid, 32		// FIQ 32-bit EL0
+	kernel_ventry	0, error_invalid, 32		// Error 32-bit EL0
+#endif
+END(bigcpus_vectors)
+
+/*
+ * bigcpus EL0 mode handlers.
+ */
+	.align	6
+el0_bigcpus_sync:
+	bigcpus_kernel_entry 0, 64, 1
+	mrs	x25, esr_el1			// read the syndrome register
+	lsr	x24, x25, #ESR_ELx_EC_SHIFT	// exception class
+	cmp	x24, #ESR_ELx_EC_SVC64		// SVC in 64-bit state
+	b.eq	el0_svc
+	cmp	x24, #ESR_ELx_EC_DABT_LOW	// data abort in EL0
+	b.eq	el0_bigcpus_da
+	cmp	x24, #ESR_ELx_EC_IABT_LOW	// instruction abort in EL0
+	b.eq	el0_bigcpus_ia
+	cmp	x24, #ESR_ELx_EC_FP_ASIMD	// FP/ASIMD access
+	b.eq	el0_bigcpus_fpsimd_acc
+	cmp	x24, #ESR_ELx_EC_FP_EXC64	// FP/ASIMD exception
+	b.eq	el0_bigcpus_fpsimd_exc
+	cmp	x24, #ESR_ELx_EC_SYS64		// configurable trap
+	b.eq	el0_bigcpus_sys
+	cmp	x24, #ESR_ELx_EC_SP_ALIGN	// stack alignment exception
+	b.eq	el0_bigcpus_sp_pc
+	cmp	x24, #ESR_ELx_EC_PC_ALIGN	// pc alignment exception
+	b.eq	el0_bigcpus_sp_pc
+	cmp	x24, #ESR_ELx_EC_UNKNOWN	// unknown exception in EL0
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_BREAKPT_LOW	// debug exception in EL0
+	b.ge	el0_bigcpus_dbg
+	b	el0_bigcpus_inv
+#ifdef CONFIG_COMPAT
+	.align	6
+el0_bigcpus_sync_compat:
+	kernel_entry 0, 32
+	mrs	x25, esr_el1			// read the syndrome register
+	lsr	x24, x25, #ESR_ELx_EC_SHIFT	// exception class
+	cmp	x24, #ESR_ELx_EC_SVC32		// SVC in 32-bit state
+	b.eq	el0_bigcpus_svc_compat
+	cmp	x24, #ESR_ELx_EC_DABT_LOW	// data abort in EL0
+	b.eq	el0_bigcpus_da
+	cmp	x24, #ESR_ELx_EC_IABT_LOW	// instruction abort in EL0
+	b.eq	el0_bigcpus_ia
+	cmp	x24, #ESR_ELx_EC_FP_ASIMD	// FP/ASIMD access
+	b.eq	el0_bigcpus_fpsimd_acc
+	cmp	x24, #ESR_ELx_EC_FP_EXC32	// FP/ASIMD exception
+	b.eq	el0_bigcpus_fpsimd_exc
+	cmp	x24, #ESR_ELx_EC_PC_ALIGN	// pc alignment exception
+	b.eq	el0_bigcpus_sp_pc
+	cmp	x24, #ESR_ELx_EC_UNKNOWN	// unknown exception in EL0
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_CP15_32	// CP15 MRC/MCR trap
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_CP15_64	// CP15 MRRC/MCRR trap
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_CP14_MR	// CP14 MRC/MCR trap
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_CP14_LS	// CP14 LDC/STC trap
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_CP14_64	// CP14 MRRC/MCRR trap
+	b.eq	el0_bigcpus_undef
+	cmp	x24, #ESR_ELx_EC_BREAKPT_LOW	// debug exception in EL0
+	b.ge	el0_bigcpus_dbg
+	b	el0_bigcpus_inv
+el0_bigcpus_svc_compat:
+	/*
+	 * AArch32 syscall handling
+	 */
+	adrp	stbl, compat_sys_call_table	// load compat syscall table pointer
+	uxtw	scno, w7			// syscall number in w7 (r7)
+	mov     sc_nr, #__NR_compat_syscalls
+	b	el0_svc_naked
+
+	.align	6
+el0_bigcpus_irq_compat:
+	kernel_entry 0, 32
+	b	el0_bigcpus_irq_naked
+#ifdef CONFIG_HISI_FIQ
+el0_bigcpus_fiq_compat:
+	kernel_entry 0, 32
+	mov	x0, sp
+	mrs	x1, esr_el1
+	b	fiq_dump
+#endif
+
+#endif
+
+el0_bigcpus_da:
+	/*
+	 * Data abort handling
+	 */
+	mrs	x26, far_el1
+	// enable interrupts before calling the main handler
+	enable_dbg_and_irq
+	ct_user_exit
+	clear_address_tag x0, x26
+	mov	x1, x25
+	mov	x2, sp
+	bl	do_mem_abort
+	b	ret_to_user
+el0_bigcpus_ia:
+	/*
+	 * Instruction abort handling
+	 */
+	mrs	x26, far_el1
+	msr     daifclr, #(8 | 4 | 1)
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_off
+#endif
+	ct_user_exit
+	mov	x0, x26
+	mov	x1, x25
+	mov	x2, sp
+	bl	do_el0_ia_bp_hardening
+	b	ret_to_user
+el0_bigcpus_fpsimd_acc:
+	/*
+	 * Floating Point or Advanced SIMD access
+	 */
+	enable_dbg
+	ct_user_exit
+	mov	x0, x25
+	mov	x1, sp
+	bl	do_fpsimd_acc
+	b	ret_to_user
+el0_bigcpus_fpsimd_exc:
+	/*
+	 * Floating Point or Advanced SIMD exception
+	 */
+	enable_dbg
+	ct_user_exit
+	mov	x0, x25
+	mov	x1, sp
+	bl	do_fpsimd_exc
+	b	ret_to_user
+el0_bigcpus_sp_pc:
+	/*
+	 * Stack or PC alignment exception handling
+	 */
+	mrs	x26, far_el1
+	enable_dbg
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_off
+#endif
+	ct_user_exit
+	mov	x0, x26
+	mov	x1, x25
+	mov	x2, sp
+	bl	do_sp_pc_abort
+	b	ret_to_user
+el0_bigcpus_undef:
+	/*
+	 * Undefined instruction
+	 */
+	// enable interrupts before calling the main handler
+	enable_dbg_and_irq
+	ct_user_exit
+	mov	x0, sp
+	bl	do_undefinstr
+	b	ret_to_user
+el0_bigcpus_sys:
+	/*
+	 * System instructions, for trapped cache maintenance instructions
+	 */
+	enable_dbg_and_irq
+	ct_user_exit
+	mov	x0, x25
+	mov	x1, sp
+	bl	do_sysinstr
+	b	ret_to_user
+el0_bigcpus_dbg:
+	/*
+	 * Debug exception handling
+	 */
+	tbnz	x24, #0, el0_inv		// EL0 only
+	mrs	x0, far_el1
+	mov	x1, x25
+	mov	x2, sp
+	bl	do_debug_exception
+	enable_dbg
+	ct_user_exit
+	b	ret_to_user
+el0_bigcpus_inv:
+	enable_dbg
+	ct_user_exit
+	mov	x0, sp
+	mov	x1, #BAD_SYNC
+	mov	x2, x25
+	bl	bad_el0_sync
+	b	ret_to_user
+ENDPROC(el0_bigcpus_sync)
+
+
+	.align	6
+el0_bigcpus_irq:
+	bigcpus_kernel_entry 0, 64, 1
+el0_bigcpus_irq_naked:
+	enable_dbg
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_off
+#endif
+
+	ct_user_exit
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+	tbz	x22, #55, 1f
+	bl	do_el0_irq_bp_hardening
+1:
+#endif
+	irq_handler
+
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_on
+#endif
+	b	ret_to_user
+ENDPROC(el0_bigcpus_irq)
+
+el0_bigcpus_fiq:
+	bigcpus_kernel_entry 0, 64, 1
+	mov	x0, sp
+	mrs	x1, esr_el1
+	b	fiq_dump
+ENDPROC(el0_bigcpus_fiq)
+#endif
 /*
  * EL0 mode handlers.
  */
@@ -628,6 +1161,14 @@ el0_svc_compat:
 el0_irq_compat:
 	kernel_entry 0, 32
 	b	el0_irq_naked
+#ifdef CONFIG_HISI_FIQ
+el0_fiq_compat:
+	kernel_entry 0, 32
+	mov	x0, sp
+	mrs	x1, esr_el1
+	b	fiq_dump
+#endif
+
 #endif
 
 el0_da:
@@ -757,6 +1298,14 @@ el0_irq_naked:
 #endif
 	b	ret_to_user
 ENDPROC(el0_irq)
+#ifdef CONFIG_HISI_FIQ
+el0_fiq:
+	kernel_entry 0
+	mov	x0, sp
+	mrs	x1, esr_el1
+	b	fiq_dump
+ENDPROC(el0_fiq)
+#endif
 
 /*
  * Register switch for AArch64. The callee-saved registers need to be saved
@@ -795,6 +1344,26 @@ ENDPROC(cpu_switch_to)
  * and this includes saving x0 back into the kernel stack.
  */
 ret_fast_syscall:
+#ifdef CONFIG_HISI_BB
+#ifdef CONFIG_HISI_BB_SYSCALL
+/*
+*This is the syscall debug patch. The default is off.
+*/
+#syscall_hook start
+	push	x6, x7
+	push	x4, x5
+	push	x2, x3
+	push	x0, x1
+	mov x0, scno
+	mov x1, #1
+	bl syscall_hook
+	pop	x0, x1
+	pop	x2, x3
+	pop	x4, x5
+	pop	x6, x7
+#syscall_hook end
+#endif
+#endif
 	disable_irq				// disable interrupts
 	str	x0, [sp, #S_X0]			// returned x0
 	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for syscall tracing
@@ -857,6 +1426,26 @@ el0_svc_naked:					// compat entry point
 	enable_dbg_and_irq
 	ct_user_exit 1
 
+#ifdef CONFIG_HISI_BB
+#ifdef CONFIG_HISI_BB_SYSCALL
+/*
+*This is the syscall debug patch. The default is off.
+*/
+#syscall_hook start
+	push	x6, x7
+	push	x4, x5
+	push	x2, x3
+	push	x0, x1
+	mov x0, scno
+	mov x1, #0
+	bl syscall_hook
+	pop	x0, x1
+	pop	x2, x3
+	pop	x4, x5
+	pop	x6, x7
+#syscall_hook end
+#endif
+#endif
 	ldr	x16, [tsk, #TSK_TI_FLAGS]	// check for syscall hooks
 	tst	x16, #_TIF_SYSCALL_WORK
 	b.ne	__sys_trace
@@ -988,7 +1577,7 @@ __ni_sys_trace:
 	.endm
 
 	.align	11
-ENTRY(tramp_vectors)
+ENTRY_NOTAG(tramp_vectors)
 	.space	0x400
 
 	tramp_ventry
@@ -1029,3 +1618,41 @@ ENTRY(sys_rt_sigreturn_wrapper)
 	mov	x0, sp
 	b	sys_rt_sigreturn
 ENDPROC(sys_rt_sigreturn_wrapper)
+
+#ifdef CONFIG_HISI_BB
+
+ENTRY(get_pt_regs)
+	stp x29, x30, [SP, #-0x30]!
+	stp x0, x1, [sp, #0x10]
+	stp x2, x3, [sp, #0x20]
+	stp x0, x1, [x0]
+	stp x2, x3, [x0, #0x10]!
+	stp x4, x5, [x0, #0x10]!
+	stp x6, x7, [x0, #0x10]!
+	stp x8, x9, [x0, #0x10]!
+	stp x10, x11, [x0, #0x10]!
+	stp x12, x13, [x0, #0x10]!
+	stp x14, x15, [x0, #0x10]!
+	stp x16, x17, [x0, #0x10]!
+	stp x18, x19, [x0, #0x10]!
+	stp x20, x21, [x0, #0x10]!
+	stp x22, x23, [x0, #0x10]!
+	stp x24, x25, [x0, #0x10]!
+	stp x26, x27, [x0, #0x10]!
+	stp x28, x29, [x0, #0x10]!
+	ldr x1, [sp] 					//get preceding sp
+	ldr x2, [x1, #0x8] 				//get preceding lr
+	str x2, [x0, #0x10]! 			//set lr
+	str x1, [x0, #0x8]! 			//set sp
+	mrs x1, NZCV 					//get pstate flag
+	mrs x2, DAIF
+	mrs x3, CurrentEL
+	orr x1, x1, x2
+	orr x1, x1, x3
+	stp lr, x1, [x0, #0x8]! 		//set pc,pstate
+	ldp x2, x3, [sp, #0x20]
+	ldp x0, x1, [sp, #0x10]
+	ldp x29,x30,[SP],#0x30
+	ret
+ENDPROC(get_pt_regs)
+#endif

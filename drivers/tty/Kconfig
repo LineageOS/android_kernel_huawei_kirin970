@@ -455,4 +455,8 @@ config MIPS_EJTAG_FDC_KGDB_CHAN
 	help
 	  FDC channel number to use for KGDB.
 
+config HISI_TTY
+	bool "hisi tty"
+	default n
+
 endif # TTY

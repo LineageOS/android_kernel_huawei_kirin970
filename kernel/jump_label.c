@@ -523,6 +523,11 @@ static struct notifier_block jump_label_module_nb = {
 	.priority = 1, /* higher than tracepoints */
 };
 
+int jump_label_register(struct module *mod)
+{
+	return jump_label_module_notify(&jump_label_module_nb, MODULE_STATE_COMING, mod);
+}
+
 static __init int jump_label_init_module(void)
 {
 	return register_module_notifier(&jump_label_module_nb);

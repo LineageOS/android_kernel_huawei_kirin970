@@ -752,9 +752,13 @@ static long acc_ioctl(struct file *fp, unsigned code, unsigned long value)
 
 static int acc_open(struct inode *ip, struct file *fp)
 {
-	printk(KERN_INFO "acc_open\n");
-	if (atomic_xchg(&_acc_dev->open_excl, 1))
+	if (atomic_xchg(&_acc_dev->open_excl, 1)) {
+		pr_warn("acc_open busy %s(%d)\n", current->comm,
+				task_pid_nr(current));
 		return -EBUSY;
+	}
+
+	pr_info("acc_open %s(%d)\n", current->comm, task_pid_nr(current));
 
 	_acc_dev->disconnected = 0;
 	fp->private_data = _acc_dev;
@@ -854,7 +858,12 @@ int acc_ctrlrequest(struct usb_composite_dev *cdev,
 			value = w_length;
 		} else if (b_request == ACCESSORY_SET_AUDIO_MODE &&
 				w_index == 0 && w_length == 0) {
+			/* disable audio source mode on hisi feb */
+#ifdef CONFIG_USB_DWC3_FEB
+			dev->audio_mode = 0;
+#else
 			dev->audio_mode = w_value;
+#endif
 			cdev->req->complete = acc_complete_setup_noop;
 			value = 0;
 		} else if (b_request == ACCESSORY_REGISTER_HID) {
@@ -929,6 +938,8 @@ err:
 }
 EXPORT_SYMBOL_GPL(acc_ctrlrequest);
 
+#include "function-hisi/f_accessory_hisi.c"
+
 static int
 __acc_function_bind(struct usb_configuration *c,
 			struct usb_function *f, bool configfs)
@@ -975,6 +986,16 @@ __acc_function_bind(struct usb_configuration *c,
 		acc_highspeed_out_desc.bEndpointAddress =
 			acc_fullspeed_out_desc.bEndpointAddress;
 	}
+
+#ifdef CONFIG_HISI_USB_FUNC_ADD_SS_DESC
+	/* support super speed & plus hardware */
+	if (gadget_is_superspeed(c->cdev->gadget)) {
+		acc_superspeed_in_desc.bEndpointAddress =
+			acc_fullspeed_in_desc.bEndpointAddress;
+		acc_superspeed_out_desc.bEndpointAddress =
+			acc_fullspeed_out_desc.bEndpointAddress;
+	}
+#endif
 
 	DBG(cdev, "%s speed %s: IN/%s, OUT/%s\n",
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
@@ -1045,6 +1066,7 @@ static void acc_start_work(struct work_struct *data)
 {
 	char *envp[2] = { "ACCESSORY=START", NULL };
 
+	pr_info("%s:%d send UEvent ACCESSORY=START\n", __func__, __LINE__);
 	kobject_uevent_env(&acc_device.this_device->kobj, KOBJ_CHANGE, envp);
 }
 
@@ -1339,6 +1361,10 @@ static struct usb_function *acc_alloc(struct usb_function_instance *fi)
 	dev->function.strings = acc_strings,
 	dev->function.fs_descriptors = fs_acc_descs;
 	dev->function.hs_descriptors = hs_acc_descs;
+#ifdef CONFIG_HISI_USB_FUNC_ADD_SS_DESC
+	dev->function.ss_descriptors = ss_acc_descs;
+	dev->function.ssp_descriptors = ss_acc_descs;
+#endif
 	dev->function.bind = acc_function_bind_configfs;
 	dev->function.unbind = acc_function_unbind;
 	dev->function.set_alt = acc_function_set_alt;

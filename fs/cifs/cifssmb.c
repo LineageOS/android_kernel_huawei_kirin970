@@ -171,7 +171,9 @@ cifs_reconnect_tcon(struct cifs_tcon *tcon, int smb_command)
 	if (!ses->need_reconnect && !tcon->need_reconnect)
 		return 0;
 
-	nls_codepage = load_nls_default();
+	nls_codepage = load_nls(CONFIG_CIFS_DEFAULT);
+	if (NULL == nls_codepage)
+		nls_codepage = load_nls_default();
 
 	/*
 	 * need to prevent multiple threads trying to simultaneously

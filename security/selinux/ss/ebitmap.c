@@ -46,15 +46,32 @@ int ebitmap_cmp(struct ebitmap *e1, struct ebitmap *e2)
 	return 1;
 }
 
-int ebitmap_cpy(struct ebitmap *dst, struct ebitmap *src)
+static inline struct ebitmap_node *try_alloc(bool protectable, gfp_t gfp)
+{
+	if(protectable == true)
+		return pzalloc(selinux_pool, sizeof(struct ebitmap_node), gfp);
+	else
+		return kzalloc(sizeof(struct ebitmap_node), gfp);
+}
+
+static inline void try_free(bool protectable, struct ebitmap_node *n)
+{
+	if (protectable == true)
+		pfree(selinux_pool, n);
+	else
+		kfree(n);
+}
+
+int ebitmap_cpy(struct ebitmap *dst, struct ebitmap *src,
+		const bool protectable)
 {
 	struct ebitmap_node *n, *new, *prev;
 
-	ebitmap_init(dst);
+	ebitmap_init(dst, protectable);
 	n = src->node;
 	prev = NULL;
 	while (n) {
-		new = kzalloc(sizeof(*new), GFP_ATOMIC);
+		new = try_alloc(protectable, GFP_ATOMIC);
 		if (!new) {
 			ebitmap_destroy(dst);
 			return -ENOMEM;
@@ -162,7 +179,7 @@ int ebitmap_netlbl_import(struct ebitmap *ebmap,
 		if (e_iter == NULL ||
 		    offset >= e_iter->startbit + EBITMAP_SIZE) {
 			e_prev = e_iter;
-			e_iter = kzalloc(sizeof(*e_iter), GFP_ATOMIC);
+			e_iter = try_alloc(ebmap->protectable);
 			if (e_iter == NULL)
 				goto netlbl_import_failure;
 			e_iter->startbit = offset - (offset % EBITMAP_SIZE);
@@ -288,7 +305,7 @@ int ebitmap_set_bit(struct ebitmap *e, unsigned long bit, int value)
 					prev->next = n->next;
 				else
 					e->node = n->next;
-				kfree(n);
+				try_free(e->protectable, n);
 			}
 			return 0;
 		}
@@ -299,7 +316,7 @@ int ebitmap_set_bit(struct ebitmap *e, unsigned long bit, int value)
 	if (!value)
 		return 0;
 
-	new = kzalloc(sizeof(*new), GFP_ATOMIC);
+	new = try_alloc(e->protectable, GFP_ATOMIC);
 	if (!new)
 		return -ENOMEM;
 
@@ -332,7 +349,7 @@ void ebitmap_destroy(struct ebitmap *e)
 	while (n) {
 		temp = n;
 		n = n->next;
-		kfree(temp);
+		try_free(e->protectable, temp);
 	}
 
 	e->highbit = 0;
@@ -340,7 +357,7 @@ void ebitmap_destroy(struct ebitmap *e)
 	return;
 }
 
-int ebitmap_read(struct ebitmap *e, void *fp)
+int ebitmap_read(struct ebitmap *e, void *fp, bool protectable)
 {
 	struct ebitmap_node *n = NULL;
 	u32 mapunit, count, startbit, index;
@@ -348,7 +365,7 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 	__le32 buf[3];
 	int rc, i;
 
-	ebitmap_init(e);
+	ebitmap_init(e, protectable);
 
 	rc = next_entry(buf, fp, sizeof buf);
 	if (rc < 0)
@@ -400,7 +417,7 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 
 		if (!n || startbit >= n->startbit + EBITMAP_SIZE) {
 			struct ebitmap_node *tmp;
-			tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
+			tmp = try_alloc(e->protectable, GFP_KERNEL);
 			if (!tmp) {
 				printk(KERN_ERR
 				       "SELinux: ebitmap: out of memory\n");
@@ -428,7 +445,7 @@ int ebitmap_read(struct ebitmap *e, void *fp)
 		}
 		map = le64_to_cpu(map);
 
-		index = (startbit - n->startbit) / EBITMAP_UNIT_SIZE;
+		index = (startbit - n->startbit) / EBITMAP_UNIT_SIZE;/* [false alarm]:original code */
 		while (map) {
 			n->maps[index++] = map & (-1UL);
 			map = EBITMAP_SHIFT_UNIT_SIZE(map);

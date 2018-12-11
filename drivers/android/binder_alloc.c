@@ -31,6 +31,10 @@
 #include "binder_alloc.h"
 #include "binder_trace.h"
 
+#ifdef CONFIG_HUAWEI_KSTATE
+#include <huawei_platform/power/hw_kcollect.h>
+#endif
+
 struct list_lru binder_alloc_lru;
 
 static DEFINE_MUTEX(binder_alloc_mmap_lock);
@@ -219,7 +223,7 @@ static int binder_update_page_range(struct binder_alloc *alloc, int allocate,
 		mm = alloc->vma_vm_mm;
 
 	if (mm) {
-		down_write(&mm->mmap_sem);
+		down_read(&mm->mmap_sem);
 		vma = alloc->vma;
 	}
 
@@ -288,7 +292,7 @@ static int binder_update_page_range(struct binder_alloc *alloc, int allocate,
 		/* vm_insert_page does not seem to increment the refcount */
 	}
 	if (mm) {
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 		mmput(mm);
 	}
 	return 0;
@@ -321,7 +325,7 @@ err_page_ptr_cleared:
 	}
 err_no_vma:
 	if (mm) {
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 		mmput(mm);
 	}
 	return vma ? -ENOMEM : -ESRCH;
@@ -364,6 +368,22 @@ struct binder_buffer *binder_alloc_new_buf_locked(struct binder_alloc *alloc,
 				alloc->pid, extra_buffers_size);
 		return ERR_PTR(-EINVAL);
 	}
+
+#ifdef CONFIG_HUAWEI_KSTATE
+	/*
+	* if async and no more async space left.
+	* data bigger 1/3 buffer or buffer free lower 100K
+	*/
+	if (is_async
+		&& (alloc->free_async_space
+			< 3*(size + sizeof(struct binder_buffer))
+			|| alloc->free_async_space < 100*1024)) {
+		pr_warn("will no more space [freed:%zd][alloc size:%zd], pid [%d]\n",
+			alloc->free_async_space, size, alloc->pid);
+		hwbinderinfo(-1, alloc->pid);
+	}
+#endif
+
 	if (is_async &&
 	    alloc->free_async_space < size + sizeof(struct binder_buffer)) {
 		binder_alloc_debug(BINDER_DEBUG_BUFFER_ALLOC,
@@ -462,6 +482,7 @@ struct binder_buffer *binder_alloc_new_buf_locked(struct binder_alloc *alloc,
 	rb_erase(best_fit, &alloc->free_buffers);
 	buffer->free = 0;
 	buffer->free_in_progress = 0;
+	buffer->allow_user_free = 0;
 	binder_insert_allocated_buffer_locked(alloc, buffer);
 	binder_alloc_debug(BINDER_DEBUG_BUFFER_ALLOC,
 		     "%d: binder_alloc_buf size %zd got %pK\n",
@@ -476,6 +497,11 @@ struct binder_buffer *binder_alloc_new_buf_locked(struct binder_alloc *alloc,
 			     "%d: binder_alloc_buf size %zd async free %zd\n",
 			      alloc->pid, size, alloc->free_async_space);
 	}
+
+#ifdef CONFIG_HUAWEI_BINDER_ASHMEM
+	buffer->ashmem.file = NULL;
+#endif
+
 	return buffer;
 
 err_alloc_buf_struct_failed:
@@ -636,6 +662,10 @@ static void binder_free_buf_locked(struct binder_alloc *alloc,
 void binder_alloc_free_buf(struct binder_alloc *alloc,
 			    struct binder_buffer *buffer)
 {
+#ifdef CONFIG_HUAWEI_BINDER_ASHMEM
+	binder_ashmem_unmap(alloc, buffer);
+#endif
+
 	mutex_lock(&alloc->mutex);
 	binder_free_buf_locked(alloc, buffer);
 	mutex_unlock(&alloc->mutex);
@@ -752,6 +782,10 @@ void binder_alloc_deferred_release(struct binder_alloc *alloc)
 
 		/* Transaction should already have been freed */
 		BUG_ON(buffer->transaction);
+
+#ifdef CONFIG_HUAWEI_BINDER_ASHMEM
+		binder_ashmem_recycle(buffer);
+#endif
 
 		binder_free_buf_locked(alloc, buffer);
 		buffers++;

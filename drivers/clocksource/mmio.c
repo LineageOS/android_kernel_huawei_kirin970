@@ -69,5 +69,5 @@ int __init clocksource_mmio_init(void __iomem *base, const char *name,
 	cs->clksrc.mask = CLOCKSOURCE_MASK(bits);
 	cs->clksrc.flags = CLOCK_SOURCE_IS_CONTINUOUS;
 
-	return clocksource_register_hz(&cs->clksrc, hz);
+	return clocksource_register_hz(&cs->clksrc, hz); /*lint !e429 */
 }

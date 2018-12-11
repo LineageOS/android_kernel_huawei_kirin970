@@ -259,11 +259,11 @@ static ssize_t show_available_freqs(struct cpufreq_policy *policy, char *buf,
 	return count;
 
 }
-
+/*lint -e773*/
 #define cpufreq_attr_available_freq(_name)	  \
 struct freq_attr cpufreq_freq_attr_##_name##_freqs =     \
 __ATTR_RO(_name##_frequencies)
-
+/*lint +e773*/
 /**
  * show_scaling_available_frequencies - show available normal frequencies for
  * the specified CPU

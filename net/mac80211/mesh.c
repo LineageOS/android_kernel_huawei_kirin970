@@ -63,7 +63,6 @@ bool mesh_matches_local(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
 	u32 basic_rates = 0;
 	struct cfg80211_chan_def sta_chan_def;
-	struct ieee80211_supported_band *sband;
 
 	/*
 	 * As support for each feature is added, check for matching
@@ -84,11 +83,7 @@ bool mesh_matches_local(struct ieee80211_sub_if_data *sdata,
 	     (ifmsh->mesh_auth_id == ie->mesh_config->meshconf_auth)))
 		return false;
 
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return false;
-
-	ieee80211_sta_get_rates(sdata, ie, sband->band,
+	ieee80211_sta_get_rates(sdata, ie, ieee80211_get_sdata_band(sdata),
 				&basic_rates);
 
 	if (sdata->vif.bss_conf.basic_rates != basic_rates)
@@ -404,13 +399,12 @@ static int mesh_add_ds_params_ie(struct ieee80211_sub_if_data *sdata,
 int mesh_add_ht_cap_ie(struct ieee80211_sub_if_data *sdata,
 		       struct sk_buff *skb)
 {
+	struct ieee80211_local *local = sdata->local;
+	enum nl80211_band band = ieee80211_get_sdata_band(sdata);
 	struct ieee80211_supported_band *sband;
 	u8 *pos;
 
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return -EINVAL;
-
+	sband = local->hw.wiphy->bands[band];
 	if (!sband->ht_cap.ht_supported ||
 	    sdata->vif.bss_conf.chandef.width == NL80211_CHAN_WIDTH_20_NOHT ||
 	    sdata->vif.bss_conf.chandef.width == NL80211_CHAN_WIDTH_5 ||
@@ -468,13 +462,12 @@ int mesh_add_ht_oper_ie(struct ieee80211_sub_if_data *sdata,
 int mesh_add_vht_cap_ie(struct ieee80211_sub_if_data *sdata,
 			struct sk_buff *skb)
 {
+	struct ieee80211_local *local = sdata->local;
+	enum nl80211_band band = ieee80211_get_sdata_band(sdata);
 	struct ieee80211_supported_band *sband;
 	u8 *pos;
 
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return -EINVAL;
-
+	sband = local->hw.wiphy->bands[band];
 	if (!sband->vht_cap.vht_supported ||
 	    sdata->vif.bss_conf.chandef.width == NL80211_CHAN_WIDTH_20_NOHT ||
 	    sdata->vif.bss_conf.chandef.width == NL80211_CHAN_WIDTH_5 ||
@@ -923,15 +916,11 @@ ieee80211_mesh_process_chnswitch(struct ieee80211_sub_if_data *sdata,
 	struct cfg80211_csa_settings params;
 	struct ieee80211_csa_ie csa_ie;
 	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
-	struct ieee80211_supported_band *sband;
+	enum nl80211_band band = ieee80211_get_sdata_band(sdata);
 	int err;
 	u32 sta_flags;
 
 	sdata_assert_lock(sdata);
-
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return false;
 
 	sta_flags = IEEE80211_STA_DISABLE_VHT;
 	switch (sdata->vif.bss_conf.chandef.width) {
@@ -946,7 +935,7 @@ ieee80211_mesh_process_chnswitch(struct ieee80211_sub_if_data *sdata,
 
 	memset(&params, 0, sizeof(params));
 	memset(&csa_ie, 0, sizeof(csa_ie));
-	err = ieee80211_parse_ch_switch_ie(sdata, elems, sband->band,
+	err = ieee80211_parse_ch_switch_ie(sdata, elems, band,
 					   sta_flags, sdata->vif.addr,
 					   &csa_ie);
 	if (err < 0)

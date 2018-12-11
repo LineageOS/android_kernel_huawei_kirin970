@@ -46,6 +46,8 @@
 #include <linux/usb/audio-v2.h>
 #include <linux/module.h>
 
+#include <linux/hisi/usb/hisi_usb.h>
+
 #include <sound/control.h>
 #include <sound/core.h>
 #include <sound/info.h>
@@ -66,7 +68,10 @@
 #include "format.h"
 #include "power.h"
 #include "stream.h"
+#include "hifi/usbaudio_ctrl.h"
+#include "hifi/usbaudio_dtsi_property.h"
 
+/*lint -e31 -e1058*/
 MODULE_AUTHOR("Takashi Iwai <tiwai@suse.de>");
 MODULE_DESCRIPTION("USB Audio");
 MODULE_LICENSE("GPL");
@@ -112,6 +117,20 @@ MODULE_PARM_DESC(quirk_alias, "Quirk aliases, e.g. 0123abcd:5678beef.");
 static DEFINE_MUTEX(register_mutex);
 static struct snd_usb_audio *usb_chip[SNDRV_CARDS];
 static struct usb_driver usb_audio_driver;
+
+/*
+ * do auto suspend accord form dtsi of usbaudio property
+ */
+static void hisi_usb_check_auto_suspend_device(struct usb_device *dev)
+{
+	if(NULL == dev)
+		return;
+
+	if(get_usbaudio_need_auto_suspend()) {
+		pr_info("%s: set usb auto suspend\n",__FUNCTION__);
+		usb_enable_autosuspend(dev);
+	}
+}
 
 /*
  * disconnect streams
@@ -547,6 +566,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 	struct usb_host_interface *alts;
 	int ifnum;
 	u32 id;
+	bool switch_result;
 
 	alts = &intf->altsetting[0];
 	ifnum = get_iface_desc(alts)->bInterfaceNumber;
@@ -560,6 +580,15 @@ static int usb_audio_probe(struct usb_interface *intf,
 	err = snd_usb_apply_boot_quirk(dev, intf, quirk, id);
 	if (err < 0)
 		return err;
+
+	/* for hifiusb hibernation */
+	hisi_usb_check_huawei_earphone_device(dev);
+
+	switch_result = usbaudio_ctrl_controller_switch(dev, id, alts, ifnum);
+	if (switch_result) {
+		pr_info("use hifi usb\n");
+		return  -ENXIO;
+	}
 
 	/*
 	 * found a config.  now register to ALSA
@@ -602,7 +631,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 		}
 	}
 	dev_set_drvdata(&dev->dev, chip);
-
+	usbaudio_ctrl_set_chip(chip);
 	/*
 	 * For devices with more than one control interface, we assume the
 	 * first contains the audio controls. We might need a more specific
@@ -635,6 +664,8 @@ static int usb_audio_probe(struct usb_interface *intf,
 	if (err < 0)
 		goto __error;
 
+	hisi_usb_check_auto_suspend_device(dev);
+
 	usb_chip[chip->index] = chip;
 	chip->num_interfaces++;
 	usb_set_intfdata(intf, chip);
@@ -666,7 +697,7 @@ static void usb_audio_disconnect(struct usb_interface *intf)
 		return;
 
 	card = chip->card;
-
+	usbaudio_ctrl_disconnect();
 	mutex_lock(&register_mutex);
 	if (atomic_inc_return(&chip->shutdown) == 1) {
 		struct snd_usb_stream *as;
@@ -779,7 +810,7 @@ static int usb_audio_suspend(struct usb_interface *intf, pm_message_t message)
 		list_for_each_entry(mixer, &chip->mixer_list, list)
 			snd_usb_mixer_suspend(mixer);
 	}
-
+	usbaudio_ctrl_wake_up(false);
 	return 0;
 }
 
@@ -821,7 +852,10 @@ err_out:
 
 static int usb_audio_resume(struct usb_interface *intf)
 {
-	return __usb_audio_resume(intf, false);
+	int ret;
+	ret = __usb_audio_resume(intf, false);
+	usbaudio_ctrl_wake_up(true);
+	return ret;
 }
 
 static int usb_audio_reset_resume(struct usb_interface *intf)
@@ -843,6 +877,17 @@ static struct usb_device_id usb_audio_ids [] = {
 };
 MODULE_DEVICE_TABLE(usb, usb_audio_ids);
 
+static int usb_audio_pre_reset(struct usb_interface *intf)
+{
+	return 0;
+}
+
+static int usb_audio_post_reset(struct usb_interface *intf)
+{
+	return 0;
+}
+
+
 /*
  * entry point for linux usb interface
  */
@@ -854,6 +899,10 @@ static struct usb_driver usb_audio_driver = {
 	.suspend =	usb_audio_suspend,
 	.resume =	usb_audio_resume,
 	.reset_resume =	usb_audio_reset_resume,
+
+	.pre_reset =	usb_audio_pre_reset,
+	.post_reset =	usb_audio_post_reset,
+
 	.id_table =	usb_audio_ids,
 	.supports_autosuspend = 1,
 };

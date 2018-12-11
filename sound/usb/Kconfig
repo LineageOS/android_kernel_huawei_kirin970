@@ -161,6 +161,6 @@ config SND_BCD2000
 	  will be called snd-bcd2000.
 
 source "sound/usb/line6/Kconfig"
-
+source "sound/usb/hifi/Kconfig"
 endif	# SND_USB
 

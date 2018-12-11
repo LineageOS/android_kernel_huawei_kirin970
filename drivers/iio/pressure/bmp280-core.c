@@ -120,12 +120,7 @@ static const struct iio_chan_spec bmp280_channels[] = {
 	},
 };
 
-/*
- * Returns humidity in percent, resolution is 0.01 percent. Output value of
- * "47445" represents 47445/1024 = 46.333 %RH.
- *
- * Taken from BME280 datasheet, Section 4.2.3, "Compensation formula".
- */
+
 
 static u32 bmp280_compensate_humidity(struct bmp280_data *data,
 				      s32 adc_humidity)
@@ -225,13 +220,7 @@ static s32 bmp280_compensate_temp(struct bmp280_data *data,
 	return (data->t_fine * 5 + 128) >> 8;
 }
 
-/*
- * Returns pressure in Pa as unsigned 32 bit integer in Q24.8 format (24
- * integer bits and 8 fractional bits).  Output value of "24674867"
- * represents 24674867/256 = 96386.2 Pa = 963.862 hPa
- *
- * Taken from datasheet, Section 3.11.3, "Compensation formula".
- */
+
 static u32 bmp280_compensate_press(struct bmp280_data *data,
 				   s32 adc_press)
 {

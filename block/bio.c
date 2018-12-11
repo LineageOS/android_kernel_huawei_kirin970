@@ -31,6 +31,7 @@
 
 #include <trace/events/block.h>
 
+#include "blk.h"
 /*
  * Test patch to inline a certain number of bi_io_vec's inside the bio
  * itself, to shrink a bio data allocation from two mempool calls to one
@@ -74,7 +75,7 @@ static struct kmem_cache *bio_find_or_create_slab(unsigned int extra_size)
 	struct kmem_cache *slab = NULL;
 	struct bio_slab *bslab, *new_bio_slabs;
 	unsigned int new_bio_slab_max;
-	unsigned int i, entry = -1;
+	unsigned int i, entry = -1;/*lint !e570*/
 
 	mutex_lock(&bio_slab_lock);
 
@@ -82,7 +83,7 @@ static struct kmem_cache *bio_find_or_create_slab(unsigned int extra_size)
 	while (i < bio_slab_nr) {
 		bslab = &bio_slabs[i];
 
-		if (!bslab->slab && entry == -1)
+		if (!bslab->slab && entry == -1)/*lint !e650*/
 			entry = i;
 		else if (bslab->slab_size == sz) {
 			slab = bslab->slab;
@@ -95,7 +96,7 @@ static struct kmem_cache *bio_find_or_create_slab(unsigned int extra_size)
 	if (slab)
 		goto out_unlock;
 
-	if (bio_slab_nr == bio_slab_max && entry == -1) {
+	if (bio_slab_nr == bio_slab_max && entry == -1) {/*lint !e650*/
 		new_bio_slab_max = bio_slab_max << 1;
 		new_bio_slabs = krealloc(bio_slabs,
 					 new_bio_slab_max * sizeof(struct bio_slab),
@@ -105,7 +106,7 @@ static struct kmem_cache *bio_find_or_create_slab(unsigned int extra_size)
 		bio_slab_max = new_bio_slab_max;
 		bio_slabs = new_bio_slabs;
 	}
-	if (entry == -1)
+	if (entry == -1)/*lint !e650*/
 		entry = bio_slab_nr++;
 
 	bslab = &bio_slabs[entry];
@@ -141,13 +142,13 @@ static void bio_put_slab(struct bio_set *bs)
 	if (WARN(!bslab, KERN_ERR "bio: unable to find slab!\n"))
 		goto out;
 
-	WARN_ON(!bslab->slab_ref);
+	WARN_ON(!bslab->slab_ref);/*lint !e613*/
 
-	if (--bslab->slab_ref)
+	if (--bslab->slab_ref)/*lint !e613*/
 		goto out;
 
-	kmem_cache_destroy(bslab->slab);
-	bslab->slab = NULL;
+	kmem_cache_destroy(bslab->slab);/*lint !e613*/
+	bslab->slab = NULL;/*lint !e613*/
 
 out:
 	mutex_unlock(&bio_slab_lock);
@@ -155,7 +156,7 @@ out:
 
 unsigned int bvec_nr_vecs(unsigned short idx)
 {
-	return bvec_slabs[idx].nr_vecs;
+	return bvec_slabs[idx].nr_vecs;/*[false alarm]:fortify*/
 }
 
 void bvec_free(mempool_t *pool, struct bio_vec *bv, unsigned int idx)
@@ -252,6 +253,9 @@ static void bio_free(struct bio *bio)
 	struct bio_set *bs = bio->bi_pool;
 	void *p;
 
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_bio_free(bio);
+#endif
 	__bio_free(bio);
 
 	if (bs) {
@@ -290,7 +294,7 @@ EXPORT_SYMBOL(bio_init);
  */
 void bio_reset(struct bio *bio)
 {
-	unsigned long flags = bio->bi_flags & (~0UL << BIO_RESET_BITS);
+	unsigned long flags = bio->bi_flags & (~0UL << BIO_RESET_BITS);/*lint !e648*/
 
 	__bio_free(bio);
 
@@ -330,6 +334,7 @@ void bio_chain(struct bio *bio, struct bio *parent)
 {
 	BUG_ON(bio->bi_private || bio->bi_end_io);
 
+	bio->bi_opf |= REQ_CHAINED;
 	bio->bi_private = parent;
 	bio->bi_end_io	= bio_chain_endio;
 	bio_inc_remaining(parent);
@@ -423,11 +428,12 @@ static void punt_bios_to_rescuer(struct bio_set *bs)
  *   RETURNS:
  *   Pointer to new bio on success, NULL on failure.
  */
+ /*lint -save -e429 -e613 */
 struct bio *bio_alloc_bioset(gfp_t gfp_mask, int nr_iovecs, struct bio_set *bs)
 {
 	gfp_t saved_gfp = gfp_mask;
 	unsigned front_pad;
-	unsigned inline_vecs;
+	int inline_vecs;
 	struct bio_vec *bvl = NULL;
 	struct bio *bio;
 	void *p;
@@ -516,7 +522,7 @@ err_free:
 	return NULL;
 }
 EXPORT_SYMBOL(bio_alloc_bioset);
-
+/*lint -restore*/
 void zero_fill_bio(struct bio *bio)
 {
 	unsigned long flags;
@@ -557,7 +563,7 @@ void bio_put(struct bio *bio)
 EXPORT_SYMBOL(bio_put);
 
 inline int bio_phys_segments(struct request_queue *q, struct bio *bio)
-{
+{/*lint !e695*/
 	if (unlikely(!bio_flagged(bio, BIO_SEG_VALID)))
 		blk_recount_segments(q, bio);
 
@@ -1133,7 +1139,8 @@ struct bio *bio_copy_user_iov(struct request_queue *q,
 	struct bio_map_data *bmd;
 	struct page *page;
 	struct bio *bio;
-	int i, ret;
+	int ret;
+	unsigned long i = 0;
 	int nr_pages = 0;
 	unsigned int len = iter->count;
 	unsigned int offset = map_data ? offset_in_page(map_data->offset) : 0;
@@ -1197,13 +1204,13 @@ struct bio *bio_copy_user_iov(struct request_queue *q,
 			bytes = len;
 
 		if (map_data) {
-			if (i == map_data->nr_entries * nr_pages) {
+			if (i == map_data->nr_entries * nr_pages) {/*lint !e647*/
 				ret = -ENOMEM;
 				break;
 			}
 
-			page = map_data->pages[i / nr_pages];
-			page += (i % nr_pages);
+			page = map_data->pages[i / nr_pages];/*lint !e573*/
+			page += (i % nr_pages);/*lint !e573*/
 
 			i++;
 		} else {
@@ -1214,7 +1221,7 @@ struct bio *bio_copy_user_iov(struct request_queue *q,
 			}
 		}
 
-		if (bio_add_pc_page(q, bio, page, bytes, offset) < bytes)
+		if (((unsigned int)bio_add_pc_page(q, bio, page, bytes, offset)) < bytes)
 			break;
 
 		len -= bytes;
@@ -1335,7 +1342,7 @@ struct bio *bio_map_user_iov(struct request_queue *q,
 			/*
 			 * sorry...
 			 */
-			if (bio_add_pc_page(q, bio, pages[j], bytes, offset) <
+			if (((unsigned int)bio_add_pc_page(q, bio, pages[j], bytes, offset)) <
 					    bytes)
 				break;
 
@@ -1382,8 +1389,8 @@ struct bio *bio_map_user_iov(struct request_queue *q,
 		put_page(bvec->bv_page);
 	}
  out:
-	kfree(pages);
-	bio_put(bio);
+	kfree(pages);/*lint !e668*/
+	bio_put(bio);/*lint !e668*/
 	return ERR_PTR(ret);
 }
 
@@ -1459,8 +1466,8 @@ struct bio *bio_map_kern(struct request_queue *q, void *data, unsigned int len,
 		if (bytes > len)
 			bytes = len;
 
-		if (bio_add_pc_page(q, bio, virt_to_page(data), bytes,
-				    offset) < bytes) {
+		if (((unsigned int)bio_add_pc_page(q, bio, virt_to_page(data), bytes,
+				    offset)) < bytes) {
 			/* we don't support partial mappings */
 			bio_put(bio);
 			return ERR_PTR(-EINVAL);
@@ -1542,7 +1549,7 @@ struct bio *bio_copy_kern(struct request_queue *q, void *data, unsigned int len,
 		if (!reading)
 			memcpy(page_address(page), p, bytes);
 
-		if (bio_add_pc_page(q, bio, page, bytes, 0) < bytes)
+		if (bio_add_pc_page(q, bio, page, bytes, 0) < bytes)/*lint !e574*/
 			break;
 
 		len -= bytes;
@@ -1696,8 +1703,8 @@ void generic_start_io_acct(int rw, unsigned long sectors,
 	int cpu = part_stat_lock();
 
 	part_round_stats(cpu, part);
-	part_stat_inc(cpu, part, ios[rw]);
-	part_stat_add(cpu, part, sectors[rw], sectors);
+	part_stat_inc(cpu, part, ios[rw]);/*lint !e63 !e409 !e666*/
+	part_stat_add(cpu, part, sectors[rw], sectors);/*lint !e63 !e409 !e666*/
 	part_inc_in_flight(part, rw);
 
 	part_stat_unlock();
@@ -1710,7 +1717,7 @@ void generic_end_io_acct(int rw, struct hd_struct *part,
 	unsigned long duration = jiffies - start_time;
 	int cpu = part_stat_lock();
 
-	part_stat_add(cpu, part, ticks[rw], duration);
+	part_stat_add(cpu, part, ticks[rw], duration);/*lint !e63 !e409 !e666*/
 	part_round_stats(cpu, part);
 	part_dec_in_flight(part, rw);
 
@@ -1760,6 +1767,9 @@ static inline bool bio_remaining_done(struct bio *bio)
  **/
 void bio_endio(struct bio *bio)
 {
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_bio_endio(bio);
+#endif
 again:
 	if (!bio_remaining_done(bio))
 		return;
@@ -1776,6 +1786,14 @@ again:
 		bio = __bio_chain_endio(bio);
 		goto again;
 	}
+
+#ifdef CONFIG_BLK_DEV_THROTTLING
+	if (bio->bi_throtl_end_io2)
+		bio->bi_throtl_end_io2(bio);
+
+	if (bio->bi_throtl_end_io1)
+		bio->bi_throtl_end_io1(bio);
+#endif
 
 	if (bio->bi_end_io)
 		bio->bi_end_io(bio);
@@ -1802,7 +1820,7 @@ struct bio *bio_split(struct bio *bio, int sectors,
 	struct bio *split = NULL;
 
 	BUG_ON(sectors <= 0);
-	BUG_ON(sectors >= bio_sectors(bio));
+	BUG_ON(sectors >= bio_sectors(bio));/*lint !e574*/
 
 	/*
 	 * Discards need a mutable bio_vec to accommodate the payload
@@ -1818,11 +1836,18 @@ struct bio *bio_split(struct bio *bio, int sectors,
 
 	split->bi_iter.bi_size = sectors << 9;
 
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_bio_split_pre(bio, split);
+#endif
+
 	if (bio_integrity(split))
 		bio_integrity_trim(split, 0, sectors);
 
 	bio_advance(bio, split->bi_iter.bi_size);
 
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_bio_split_post(bio,split);
+#endif
 	return split;
 }
 EXPORT_SYMBOL(bio_split);
@@ -1845,7 +1870,7 @@ void bio_trim(struct bio *bio, int offset, int size)
 
 	bio_clear_flag(bio, BIO_SEG_VALID);
 
-	bio_advance(bio, offset << 9);
+	bio_advance(bio, (unsigned)offset << 9);
 
 	bio->bi_iter.bi_size = size;
 }
@@ -1879,7 +1904,7 @@ void bioset_free(struct bio_set *bs)
 	kfree(bs);
 }
 EXPORT_SYMBOL(bioset_free);
-
+/*lint -save -e429*/
 static struct bio_set *__bioset_create(unsigned int pool_size,
 				       unsigned int front_pad,
 				       bool create_bvec_pool)
@@ -1922,7 +1947,7 @@ bad:
 	bioset_free(bs);
 	return NULL;
 }
-
+/*lint -restore*/
 /**
  * bioset_create  - Create a bio_set
  * @pool_size:	Number of bio and bio_vecs to cache in the mempool
@@ -1973,7 +1998,9 @@ EXPORT_SYMBOL(bioset_create_nobvec);
  */
 int bio_associate_blkcg(struct bio *bio, struct cgroup_subsys_state *blkcg_css)
 {
+	/*lint -save -e730*/
 	if (unlikely(bio->bi_css))
+	/*lint -restore*/
 		return -EBUSY;
 	css_get(blkcg_css);
 	bio->bi_css = blkcg_css;

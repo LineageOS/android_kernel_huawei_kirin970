@@ -74,6 +74,11 @@ DEFINE_EVENT(xhci_log_msg, xhci_dbg_ring_expansion,
 	TP_ARGS(vaf)
 );
 
+DEFINE_EVENT(xhci_log_msg, xhci_dbg_map_unmap,
+	TP_PROTO(struct va_format *vaf),
+	TP_ARGS(vaf)
+);
+
 DECLARE_EVENT_CLASS(xhci_log_ctx,
 	TP_PROTO(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx,
 		 unsigned int ep_num),

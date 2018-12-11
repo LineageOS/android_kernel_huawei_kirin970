@@ -11,8 +11,13 @@
 #include <linux/sched.h>
 
 #include "blk.h"
+#ifdef CONFIG_HISI_BLK
+#include <linux/blk_types.h>
+void hisi_blk_latency_req_check(struct request *req, enum req_process_stage_enum req_stage);
+#endif
 
-static DEFINE_PER_CPU(struct list_head, blk_cpu_done);
+DEFINE_PER_CPU(struct list_head, blk_cpu_done);
+EXPORT_PER_CPU_SYMBOL(blk_cpu_done);
 
 /*
  * Softirq action handler - move entries to local list and loop over them
@@ -32,6 +37,9 @@ static __latent_entropy void blk_done_softirq(struct softirq_action *h)
 
 		rq = list_entry(local_list.next, struct request, ipi_list);
 		list_del_init(&rq->ipi_list);
+#ifdef CONFIG_HISI_BLK
+		hisi_blk_latency_req_check(rq, REQ_PROC_STAGE_DONE_SFTIRQ);
+#endif
 		rq->q->softirq_done_fn(rq);
 	}
 }

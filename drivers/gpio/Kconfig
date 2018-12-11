@@ -22,6 +22,10 @@ menuconfig GPIOLIB
 
 if GPIOLIB
 
+config GPIO_DEVRES
+	def_bool y
+	depends on HAS_IOMEM
+
 config OF_GPIO
 	def_bool y
 	depends on OF
@@ -355,6 +359,11 @@ config GPIO_PL061
 	select GPIOLIB_IRQCHIP
 	help
 	  Say yes here to support the PrimeCell PL061 GPIO device
+
+config HISI_TUI_PL061
+	bool "TUI PL061 GPIO support"
+	help
+	  Say yes here to support the TUI for PL061 GPIO
 
 config GPIO_PXA
 	bool "PXA GPIO support"
@@ -750,6 +759,13 @@ config GPIO_PCA953X_IRQ
 	help
 	  Say yes here to enable the pca953x to be used as an interrupt
 	  controller. It requires the driver to be built in the kernel.
+
+config GPIO_PCA953X_HISI
+	bool "Some features are supported on HISI chip"
+	depends on GPIO_PCA953X=y
+	help
+	  Some features are supported on HISI chip, such as "linux, gpio-base"
+	  and so on.
 
 config GPIO_PCF857X
 	tristate "PCF857x, PCA{85,96}7x, and MAX732[89] I2C GPIO expanders"

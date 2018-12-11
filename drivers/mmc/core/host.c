@@ -31,15 +31,20 @@
 #include "slot-gpio.h"
 #include "pwrseq.h"
 
-static DEFINE_IDA(mmc_host_ida);
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+#include <linux/mmc/dsm_sdcard.h>
+#endif
+
+static DEFINE_IDR(mmc_host_idr);
 static DEFINE_SPINLOCK(mmc_host_lock);
 
 static void mmc_host_classdev_release(struct device *dev)
 {
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
 	spin_lock(&mmc_host_lock);
-	ida_remove(&mmc_host_ida, host->index);
+	idr_remove(&mmc_host_idr, host->index);
 	spin_unlock(&mmc_host_lock);
+	wake_lock_destroy(&host->detect_wake_lock);
 	kfree(host);
 }
 
@@ -63,7 +68,7 @@ void mmc_retune_enable(struct mmc_host *host)
 	host->can_retune = 1;
 	if (host->retune_period)
 		mod_timer(&host->retune_timer,
-			  jiffies + host->retune_period * HZ);
+			  (unsigned long)jiffies + (unsigned long)host->retune_period * HZ);
 }
 
 /*
@@ -250,7 +255,7 @@ int mmc_of_parse(struct mmc_host *host)
 		 * both inverted, the end result is that the CD line is
 		 * not inverted.
 		 */
-		if (cd_cap_invert ^ cd_gpio_invert)
+		if (cd_cap_invert ^ cd_gpio_invert)/*lint !e514*/
 			host->caps2 |= MMC_CAP2_CD_ACTIVE_HIGH;
 	}
 
@@ -267,7 +272,7 @@ int mmc_of_parse(struct mmc_host *host)
 		host->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
 
 	/* See the comment on CD inversion above */
-	if (ro_cap_invert ^ ro_gpio_invert)
+	if (ro_cap_invert ^ ro_gpio_invert)/*lint !e514*/
 		host->caps2 |= MMC_CAP2_RO_ACTIVE_HIGH;
 
 	if (device_property_read_bool(dev, "cap-sd-highspeed"))
@@ -287,7 +292,7 @@ int mmc_of_parse(struct mmc_host *host)
 	if (device_property_read_bool(dev, "cap-power-off-card"))
 		host->caps |= MMC_CAP_POWER_OFF_CARD;
 	if (device_property_read_bool(dev, "cap-mmc-hw-reset"))
-		host->caps |= MMC_CAP_HW_RESET;
+		host->caps |= MMC_CAP_HW_RESET;/*lint !e648*/
 	if (device_property_read_bool(dev, "cap-sdio-irq"))
 		host->caps |= MMC_CAP_SDIO_IRQ;
 	if (device_property_read_bool(dev, "full-pwr-cycle"))
@@ -326,10 +331,49 @@ int mmc_of_parse(struct mmc_host *host)
 		host->dsr_req = 0;
 	}
 
+	/* HISI do not use power sequence */
 	return mmc_pwrseq_alloc(host);
 }
 
 EXPORT_SYMBOL(mmc_of_parse);
+
+#ifdef CONFIG_HISI_MMC
+
+void hisi_stub_mmc_to_adapt_ufs(struct device *dev)
+{
+	int err = -1;
+	unsigned int stub_times = 0;
+	unsigned int stub_loop = 0;
+	static unsigned int enter_time = 0;
+
+	if (enter_time > 0)
+		return;
+	else {
+		/*if first enter this func but dev is not eMMC card*/
+		if (!strncmp(dev_name(dev), "hi_mci.1", strlen("hi_mci.1")))
+			stub_times = 1;
+		/*sd card not int too, sdio init first*/
+		if (!strncmp(dev_name(dev), "hi_mci.2", strlen("hi_mci.2")))
+			stub_times = 2;
+
+		for (stub_loop = 0; stub_loop < stub_times; stub_loop++) {
+			idr_preload(GFP_KERNEL);
+			spin_lock(&mmc_host_lock);
+			err = idr_alloc(&mmc_host_idr, NULL, 0, 0, GFP_NOWAIT);
+			spin_unlock(&mmc_host_lock);
+			idr_preload_end();
+		}
+		if (stub_times)
+			pr_err("%s %s stub for mmc idr num %d\n",
+				__func__, dev_name(dev), err);
+
+		enter_time += 1;
+	}
+
+	return;
+}
+
+#endif
 
 /**
  *	mmc_alloc_host - initialise the per-host structure.
@@ -349,20 +393,18 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 
 	/* scanning will be enabled when we're ready */
 	host->rescan_disable = 1;
+#ifdef CONFIG_HISI_MMC
+	hisi_stub_mmc_to_adapt_ufs(dev);
+#endif
 
-again:
-	if (!ida_pre_get(&mmc_host_ida, GFP_KERNEL)) {
-		kfree(host);
-		return NULL;
-	}
-
+	idr_preload(GFP_KERNEL);
 	spin_lock(&mmc_host_lock);
-	err = ida_get_new(&mmc_host_ida, &host->index);
+	err = idr_alloc(&mmc_host_idr, host, 0, 0, GFP_NOWAIT);
+	if (err >= 0)
+		host->index = err;
 	spin_unlock(&mmc_host_lock);
-
-	if (err == -EAGAIN) {
-		goto again;
-	} else if (err) {
+	idr_preload_end();
+	if (err < 0) {
 		kfree(host);
 		return NULL;
 	}
@@ -375,13 +417,23 @@ again:
 	device_initialize(&host->class_dev);
 	device_enable_async_suspend(&host->class_dev);
 
+	/* HISI do not use slot gpio */
+#if 0
 	if (mmc_gpio_alloc(host)) {
 		put_device(&host->class_dev);
 		return NULL;
 	}
+#endif
 
 	spin_lock_init(&host->lock);
 	init_waitqueue_head(&host->wq);
+	wake_lock_init(&host->detect_wake_lock, WAKE_LOCK_SUSPEND,
+		kasprintf(GFP_KERNEL, "%s_detect", mmc_hostname(host)));
+
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+	dsm_sdcard_init();
+#endif
+
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
 	setup_timer(&host->retune_timer, mmc_retune_timer, (unsigned long)host);
 
@@ -476,6 +528,7 @@ EXPORT_SYMBOL(mmc_remove_host);
  */
 void mmc_free_host(struct mmc_host *host)
 {
+	/* HISI do not use power sequence */
 	mmc_pwrseq_free(host);
 	put_device(&host->class_dev);
 }

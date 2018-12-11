@@ -35,7 +35,9 @@
 
 #include "tick-internal.h"
 #include "timekeeping_internal.h"
-
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+#include <huawei_platform/boottime/hw_boottime.h>
+#endif
 /**
  * clocks_calc_mult_shift - calculate mult/shift factors for scaled math of clocks
  * @mult:	pointer to mult variable
@@ -750,6 +752,9 @@ void __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq
 
 	clocksource_update_max_deferment(cs);
 
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+	boot_record("[INFOR] Kernel_init_start");
+#endif
 	pr_info("%s: mask: 0x%llx max_cycles: 0x%llx, max_idle_ns: %lld ns\n",
 		cs->name, cs->mask, cs->max_cycles, cs->max_idle_ns);
 }

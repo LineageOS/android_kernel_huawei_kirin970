@@ -45,7 +45,7 @@ struct tda10023_config {
 	u8 invert;
 
 	/* clock settings */
-	u32 xtal; /* defaults: 28920000 */
+	u32 xtal;
 	u8 pll_m; /* defaults: 8 */
 	u8 pll_p; /* defaults: 4 */
 	u8 pll_n; /* defaults: 1 */

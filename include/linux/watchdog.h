@@ -207,5 +207,19 @@ extern void watchdog_unregister_device(struct watchdog_device *);
 
 /* devres register variant */
 int devm_watchdog_register_device(struct device *dev, struct watchdog_device *);
-
+#ifdef CONFIG_HISI_SP805_WATCHDOG
+extern void watchdog_lockup_panic_config(void);
+extern bool watchdog_softlockup_happen(void);
+extern bool watchdog_othercpu_hardlockup_happen(void);
+extern bool watchdog_sp805_hardlockup_happen(void);
+extern void watchdog_set_thresh(int timeout);
+extern void watchdog_check_hardlockup_sp805(void);
+#else
+static inline void watchdog_lockup_panic_config(void){return;}
+static inline bool watchdog_softlockup_happen(void){return false;}
+static inline bool watchdog_othercpu_hardlockup_happen(void){return false;}
+static inline bool watchdog_sp805_hardlockup_happen(void){return false;}
+static inline void watchdog_set_thresh(int timeout){return;}
+static inline void watchdog_check_hardlockup_sp805(void){return;}
+#endif
 #endif  /* ifndef _LINUX_WATCHDOG_H */

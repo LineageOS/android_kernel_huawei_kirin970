@@ -24,7 +24,6 @@
 #define _SS_AVTAB_H_
 
 #include "security.h"
-#include <linux/flex_array.h>
 
 struct avtab_key {
 	u16 source_type;	/* source type */
@@ -84,7 +83,7 @@ struct avtab_node {
 };
 
 struct avtab {
-	struct flex_array *htable;
+	struct avtab_node **htable;
 	u32 nel;	/* number of elements */
 	u32 nslot;      /* number of hash slots */
 	u32 mask;       /* mask to compute hash func */
@@ -113,9 +112,6 @@ struct avtab_node *avtab_insert_nonunique(struct avtab *h, struct avtab_key *key
 struct avtab_node *avtab_search_node(struct avtab *h, struct avtab_key *key);
 
 struct avtab_node *avtab_search_node_next(struct avtab_node *node, int specified);
-
-void avtab_cache_init(void);
-void avtab_cache_destroy(void);
 
 #define MAX_AVTAB_HASH_BITS 16
 #define MAX_AVTAB_HASH_BUCKETS (1 << MAX_AVTAB_HASH_BITS)

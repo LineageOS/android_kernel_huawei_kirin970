@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm.h>
+#include "hisi_gpio.h"
+#include <linux/arm-smccc.h>
 
 #define GPIODIR 0x400
 #define GPIOIS  0x404
@@ -39,33 +41,44 @@
 
 #define PL061_GPIO_NR	8
 
-#ifdef CONFIG_PM
-struct pl061_context_save_regs {
-	u8 gpio_data;
-	u8 gpio_dir;
-	u8 gpio_is;
-	u8 gpio_ibe;
-	u8 gpio_iev;
-	u8 gpio_ie;
-};
-#endif
+struct hwspinlock       *gpio_hwlock;
 
-struct pl061_gpio {
-	spinlock_t		lock;
+#define HISI_SECURE_GPIO_REG_READ   0xc5010004
+#define HISI_SECURE_GPIO_REG_WRITE  0xc5010005
+unsigned char pl061_readb(struct pl061_gpio *chip, unsigned offset)
+{
+	struct amba_device *adev = chip->adev;
+	unsigned char v;
+	struct arm_smccc_res res;
 
-	void __iomem		*base;
-	struct gpio_chip	gc;
+	if (adev->secure_mode) {
+		arm_smccc_1_1_smc(HISI_SECURE_GPIO_REG_READ, offset, &res);//lint !e1514
+		v = (u8)res.a1;
+	} else {
+		v = readb(chip->base + offset);
+	}
 
-#ifdef CONFIG_PM
-	struct pl061_context_save_regs csave_regs;
-#endif
-};
+	return v;
+}
+
+void pl061_writeb(struct pl061_gpio *chip, unsigned char v, unsigned offset)
+{
+	struct amba_device *adev = chip->adev;
+	struct arm_smccc_res res;
+
+	if (adev->secure_mode) {
+		arm_smccc_1_1_smc(HISI_SECURE_GPIO_REG_WRITE, v, offset, &res);//lint !e1514
+	} else {
+		writeb(v, chip->base + offset);
+	}
+	return;
+}
 
 static int pl061_get_direction(struct gpio_chip *gc, unsigned offset)
 {
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 
-	return !(readb(chip->base + GPIODIR) & BIT(offset));
+	return !(pl061_readb(chip, GPIODIR) & BIT(offset));
 }
 
 static int pl061_direction_input(struct gpio_chip *gc, unsigned offset)
@@ -74,10 +87,25 @@ static int pl061_direction_input(struct gpio_chip *gc, unsigned offset)
 	unsigned long flags;
 	unsigned char gpiodir;
 
+	if (offset >= gc->ngpio)
+		return -EINVAL;
+
+	if (pl061_check_security_status(chip))
+		return -EBUSY;
+
 	spin_lock_irqsave(&chip->lock, flags);
-	gpiodir = readb(chip->base + GPIODIR);
+
+	if (hwspin_lock_timeout(gpio_hwlock, LOCK_TIMEOUT)) {
+		pr_err("%s: hwspinlock timeout!\n", __func__);
+		spin_unlock_irqrestore(&chip->lock, flags);
+		return -EBUSY;
+	}
+
+	gpiodir = pl061_readb(chip,  GPIODIR);
 	gpiodir &= ~(BIT(offset));
-	writeb(gpiodir, chip->base + GPIODIR);
+	pl061_writeb(chip, gpiodir, GPIODIR);
+
+	hwspin_unlock(gpio_hwlock);
 	spin_unlock_irqrestore(&chip->lock, flags);
 
 	return 0;
@@ -90,17 +118,31 @@ static int pl061_direction_output(struct gpio_chip *gc, unsigned offset,
 	unsigned long flags;
 	unsigned char gpiodir;
 
+	if (offset >= gc->ngpio)
+		return -EINVAL;
+
+	if (pl061_check_security_status(chip))
+		return -EBUSY;
+
 	spin_lock_irqsave(&chip->lock, flags);
-	writeb(!!value << offset, chip->base + (BIT(offset + 2)));
-	gpiodir = readb(chip->base + GPIODIR);
+
+	if (hwspin_lock_timeout(gpio_hwlock, LOCK_TIMEOUT)) {
+		pr_err("%s: hwspinlock timeout!\n", __func__);
+		spin_unlock_irqrestore(&chip->lock, flags);
+		return -EBUSY;
+	}
+
+	pl061_writeb(chip, !!value << offset, (BIT(offset + 2)));//lint !e514
+	gpiodir = pl061_readb(chip, GPIODIR);
 	gpiodir |= BIT(offset);
-	writeb(gpiodir, chip->base + GPIODIR);
+	pl061_writeb(chip, gpiodir, GPIODIR);
 
 	/*
 	 * gpio value is set again, because pl061 doesn't allow to set value of
 	 * a gpio pin before configuring it in OUT mode.
 	 */
-	writeb(!!value << offset, chip->base + (BIT(offset + 2)));
+	pl061_writeb(chip, !!value << offset, (BIT(offset + 2)));//lint !e514
+	hwspin_unlock(gpio_hwlock);
 	spin_unlock_irqrestore(&chip->lock, flags);
 
 	return 0;
@@ -110,14 +152,20 @@ static int pl061_get_value(struct gpio_chip *gc, unsigned offset)
 {
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 
-	return !!readb(chip->base + (BIT(offset + 2)));
+	if (pl061_check_security_status(chip))
+		return -EBUSY;
+
+	return !!pl061_readb(chip, (BIT(offset + 2)));
 }
 
 static void pl061_set_value(struct gpio_chip *gc, unsigned offset, int value)
 {
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 
-	writeb(!!value << offset, chip->base + (BIT(offset + 2)));
+	if (pl061_check_security_status(chip))
+		return;
+
+	pl061_writeb(chip, !!value << offset, (BIT(offset + 2)));//lint !e514
 }
 
 static int pl061_irq_type(struct irq_data *d, unsigned trigger)
@@ -142,12 +190,20 @@ static int pl061_irq_type(struct irq_data *d, unsigned trigger)
 		return -EINVAL;
 	}
 
+	if (pl061_check_security_status(chip))
+		return -EBUSY;
 
 	spin_lock_irqsave(&chip->lock, flags);
 
-	gpioiev = readb(chip->base + GPIOIEV);
-	gpiois = readb(chip->base + GPIOIS);
-	gpioibe = readb(chip->base + GPIOIBE);
+	if (hwspin_lock_timeout(gpio_hwlock, LOCK_TIMEOUT)) {
+		pr_err("%s: hwspinlock timeout!\n", __func__);
+		spin_unlock_irqrestore(&chip->lock, flags);
+		return -EBUSY;
+	}
+
+	gpioiev = pl061_readb(chip, GPIOIEV);
+	gpiois = pl061_readb(chip, GPIOIS);
+	gpioibe = pl061_readb(chip, GPIOIBE);
 
 	if (trigger & (IRQ_TYPE_LEVEL_HIGH | IRQ_TYPE_LEVEL_LOW)) {
 		bool polarity = trigger & IRQ_TYPE_LEVEL_HIGH;
@@ -199,10 +255,11 @@ static int pl061_irq_type(struct irq_data *d, unsigned trigger)
 			 offset);
 	}
 
-	writeb(gpiois, chip->base + GPIOIS);
-	writeb(gpioibe, chip->base + GPIOIBE);
-	writeb(gpioiev, chip->base + GPIOIEV);
+	pl061_writeb(chip, gpiois, GPIOIS);
+	pl061_writeb(chip, gpioibe, GPIOIBE);
+	pl061_writeb(chip, gpioiev, GPIOIEV);
 
+	hwspin_unlock(gpio_hwlock);
 	spin_unlock_irqrestore(&chip->lock, flags);
 
 	return 0;
@@ -216,9 +273,12 @@ static void pl061_irq_handler(struct irq_desc *desc)
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 	struct irq_chip *irqchip = irq_desc_get_chip(desc);
 
+	if (pl061_check_security_status(chip))
+		return;
+
 	chained_irq_enter(irqchip, desc);
 
-	pending = readb(chip->base + GPIOMIS);
+	pending = pl061_readb(chip, GPIOMIS);
 	if (pending) {
 		for_each_set_bit(offset, &pending, PL061_GPIO_NR)
 			generic_handle_irq(irq_find_mapping(gc->irqdomain,
@@ -234,11 +294,24 @@ static void pl061_irq_mask(struct irq_data *d)
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 	u8 mask = BIT(irqd_to_hwirq(d) % PL061_GPIO_NR);
 	u8 gpioie;
+	unsigned long flags;
 
-	spin_lock(&chip->lock);
-	gpioie = readb(chip->base + GPIOIE) & ~mask;
-	writeb(gpioie, chip->base + GPIOIE);
-	spin_unlock(&chip->lock);
+	if (pl061_check_security_status(chip))
+		return;
+
+	spin_lock_irqsave(&chip->lock, flags);
+
+	if (hwspin_lock_timeout(gpio_hwlock, LOCK_TIMEOUT)) {
+		pr_err("%s: hwspinlock timeout!\n", __func__);
+		spin_unlock_irqrestore(&chip->lock, flags);
+		return;
+	}
+
+	gpioie = pl061_readb(chip, GPIOIE) & ~mask;
+	pl061_writeb(chip, gpioie, GPIOIE);
+
+	hwspin_unlock(gpio_hwlock);
+	spin_unlock_irqrestore(&chip->lock, flags);
 }
 
 static void pl061_irq_unmask(struct irq_data *d)
@@ -247,11 +320,23 @@ static void pl061_irq_unmask(struct irq_data *d)
 	struct pl061_gpio *chip = gpiochip_get_data(gc);
 	u8 mask = BIT(irqd_to_hwirq(d) % PL061_GPIO_NR);
 	u8 gpioie;
+	unsigned long flags;
 
-	spin_lock(&chip->lock);
-	gpioie = readb(chip->base + GPIOIE) | mask;
-	writeb(gpioie, chip->base + GPIOIE);
-	spin_unlock(&chip->lock);
+	if (pl061_check_security_status(chip))
+		return;
+
+	spin_lock_irqsave(&chip->lock, flags);
+
+	if (hwspin_lock_timeout(gpio_hwlock, LOCK_TIMEOUT)) {
+		pr_err("%s: hwspinlock timeout!\n!", __func__);
+		spin_unlock_irqrestore(&chip->lock, flags);
+		return;
+	}
+
+	gpioie = pl061_readb(chip, GPIOIE) | mask;
+	pl061_writeb(chip, gpioie, GPIOIE);
+	hwspin_unlock(gpio_hwlock);
+	spin_unlock_irqrestore(&chip->lock, flags);
 }
 
 /**
@@ -269,15 +354,13 @@ static void pl061_irq_ack(struct irq_data *d)
 	u8 mask = BIT(irqd_to_hwirq(d) % PL061_GPIO_NR);
 
 	spin_lock(&chip->lock);
-	writeb(mask, chip->base + GPIOIC);
+	pl061_writeb(chip, mask, GPIOIC);
 	spin_unlock(&chip->lock);
 }
 
-static int pl061_irq_set_wake(struct irq_data *d, unsigned int state)
+static int pl061_irq_set_wake(struct irq_data *d, unsigned int on)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-
-	return irq_set_irq_wake(gc->irq_parent, state);
+	return 0;
 }
 
 static struct irq_chip pl061_irqchip = {
@@ -285,6 +368,8 @@ static struct irq_chip pl061_irqchip = {
 	.irq_ack	= pl061_irq_ack,
 	.irq_mask	= pl061_irq_mask,
 	.irq_unmask	= pl061_irq_unmask,
+	.irq_disable	= pl061_irq_mask,
+	.irq_enable	= pl061_irq_unmask,
 	.irq_set_type	= pl061_irq_type,
 	.irq_set_wake	= pl061_irq_set_wake,
 };
@@ -295,10 +380,13 @@ static int pl061_probe(struct amba_device *adev, const struct amba_id *id)
 	struct pl061_platform_data *pdata = dev_get_platdata(dev);
 	struct pl061_gpio *chip;
 	int ret, irq, i, irq_base;
+	struct device_node *np = dev->of_node;
 
 	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
 	if (chip == NULL)
 		return -ENOMEM;
+
+	chip->adev = adev;
 
 	if (pdata) {
 		chip->gc.base = pdata->gpio_base;
@@ -308,7 +396,7 @@ static int pl061_probe(struct amba_device *adev, const struct amba_id *id)
 			return -ENODEV;
 		}
 	} else {
-		chip->gc.base = -1;
+		chip->gc.base = pl061_parse_gpio_base(dev);
 		irq_base = 0;
 	}
 
@@ -317,7 +405,20 @@ static int pl061_probe(struct amba_device *adev, const struct amba_id *id)
 		return PTR_ERR(chip->base);
 
 	spin_lock_init(&chip->lock);
-	if (of_property_read_bool(dev->of_node, "gpio-ranges")) {
+	if (of_get_property(np, "gpio,hwspinlock", NULL)) {
+		gpio_hwlock = hwspin_lock_request_specific(GPIO_HWLOCK_ID);
+		if (gpio_hwlock == NULL)
+			return -EBUSY;
+	}
+
+	/* clear sec-flag of the controller */
+	chip->sec_status = 0;
+#ifdef CONFIG_HISI_TUI_PL061
+	pl061_register_TUI_driver(np, dev);
+#endif
+	/* Hook the request()/free() for pinctrl operation */
+	if (of_get_property(dev->of_node, "gpio-ranges", NULL)) {
+		chip->uses_pinctrl = true;
 		chip->gc.request = gpiochip_generic_request;
 		chip->gc.free = gpiochip_generic_free;
 	}
@@ -339,7 +440,8 @@ static int pl061_probe(struct amba_device *adev, const struct amba_id *id)
 	/*
 	 * irq_chip support
 	 */
-	writeb(0, chip->base + GPIOIE); /* disable irqs */
+	pl061_writeb(chip, 0xff, GPIOIC);
+	pl061_writeb(chip, 0, GPIOIE); /* disable irqs */
 	irq = adev->irq[0];
 	if (irq < 0) {
 		dev_err(&adev->dev, "invalid IRQ\n");
@@ -373,7 +475,7 @@ static int pl061_probe(struct amba_device *adev, const struct amba_id *id)
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_GPIO_PM_SUPPORT
 static int pl061_suspend(struct device *dev)
 {
 	struct pl061_gpio *chip = dev_get_drvdata(dev);
@@ -409,10 +511,10 @@ static int pl061_resume(struct device *dev)
 			pl061_direction_input(&chip->gc, offset);
 	}
 
-	writeb(chip->csave_regs.gpio_is, chip->base + GPIOIS);
-	writeb(chip->csave_regs.gpio_ibe, chip->base + GPIOIBE);
-	writeb(chip->csave_regs.gpio_iev, chip->base + GPIOIEV);
-	writeb(chip->csave_regs.gpio_ie, chip->base + GPIOIE);
+	pl061_writeb(chip, chip->csave_regs.gpio_is, GPIOIS);
+	pl061_writeb(chip, chip->csave_regs.gpio_ibe, GPIOIBE);
+	pl061_writeb(chip, chip->csave_regs.gpio_iev, GPIOIEV);
+	pl061_writeb(chip, chip->csave_regs.gpio_ie, GPIOIE);
 
 	return 0;
 }
@@ -436,7 +538,7 @@ static struct amba_id pl061_ids[] = {
 static struct amba_driver pl061_gpio_driver = {
 	.drv = {
 		.name	= "pl061_gpio",
-#ifdef CONFIG_PM
+#ifdef CONFIG_GPIO_PM_SUPPORT
 		.pm	= &pl061_dev_pm_ops,
 #endif
 	},
@@ -448,4 +550,4 @@ static int __init pl061_gpio_init(void)
 {
 	return amba_driver_register(&pl061_gpio_driver);
 }
-device_initcall(pl061_gpio_init);
+subsys_initcall(pl061_gpio_init);

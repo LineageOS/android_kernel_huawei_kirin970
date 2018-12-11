@@ -37,6 +37,8 @@
 #include <linux/uio.h>
 #include <linux/atomic.h>
 #include <linux/prefetch.h>
+#include <linux/fscrypt_common.h>
+#include <linux/iolimit_cgroup.h>
 
 /*
  * How many user pages to map in one call to get_user_pages().  This determines
@@ -190,7 +192,7 @@ static inline int dio_refill_pages(struct dio *dio, struct dio_submit *sdio)
 		sdio->to = ((ret - 1) & (PAGE_SIZE - 1)) + 1;
 		return 0;
 	}
-	return ret;	
+	return ret;
 }
 
 /*
@@ -297,7 +299,7 @@ static void dio_aio_complete_work(struct work_struct *work)
 static int dio_bio_complete(struct dio *dio, struct bio *bio);
 
 /*
- * Asynchronous IO callback. 
+ * Asynchronous IO callback.
  */
 static void dio_bio_end_aio(struct bio *bio)
 {
@@ -401,6 +403,20 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 {
 	struct bio *bio = sdio->bio;
 	unsigned long flags;
+#ifdef CONFIG_FS_ENCRYPTION
+	struct inode *inode = dio->inode;
+
+	if (fscrypt_has_encryption_key(inode) && S_ISREG(inode->i_mode) &&
+		inode->i_sb->s_cop->is_inline_encrypted &&
+		inode->i_sb->s_cop->is_inline_encrypted(inode)) {
+		bio->hisi_bio.ci_key = fscrypt_ci_key(inode);
+		bio->hisi_bio.ci_key_len = fscrypt_ci_key_len(inode);
+		bio->hisi_bio.ci_key_index = fscrypt_ci_key_index(inode);
+		/*lint -save -e704*/
+		bio->hisi_bio.index = sdio->logical_offset_in_bio >> sdio->blkbits;
+		/*lint -restore*/
+	}
+#endif
 
 	bio->bi_private = dio;
 
@@ -413,6 +429,8 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 
 	dio->bio_bdev = bio->bi_bdev;
 
+	blk_throtl_get_quota(bio->bi_bdev, bio->bi_iter.bi_size,
+			     msecs_to_jiffies(100), true);
 	if (sdio->submit_io) {
 		sdio->submit_io(bio, dio->inode, sdio->logical_offset_in_bio);
 		dio->bio_cookie = BLK_QC_T_NONE;
@@ -456,7 +474,11 @@ static struct bio *dio_await_one(struct dio *dio)
 		__set_current_state(TASK_UNINTERRUPTIBLE);
 		dio->waiter = current;
 		spin_unlock_irqrestore(&dio->bio_lock, flags);
+#ifndef CONFIG_HISI_BLK
 		if (!(dio->iocb->ki_flags & IOCB_HIPRI) ||
+#else
+		if (
+#endif
 		    !blk_poll(bdev_get_queue(dio->bio_bdev), dio->bio_cookie))
 			io_schedule();
 		/* wake up sets us TASK_RUNNING */
@@ -711,7 +733,7 @@ static inline int dio_bio_add_page(struct dio_submit *sdio)
 	}
 	return ret;
 }
-		
+
 /*
  * Put cur_page under IO.  The section of cur_page which is described by
  * cur_page_offset,cur_page_len is put into a BIO.  The section of cur_page
@@ -773,7 +795,7 @@ out:
  * An autonomous function to put a chunk of a page under deferred IO.
  *
  * The caller doesn't actually know (or care) whether this piece of page is in
- * a BIO, or is under IO or whatever.  We just take care of all possible 
+ * a BIO, or is under IO or whatever.  We just take care of all possible
  * situations here.  The separation between the logic of do_direct_IO() and
  * that of submit_page_section() is important for clarity.  Please don't break.
  *
@@ -892,7 +914,7 @@ static inline void dio_zero_block(struct dio *dio, struct dio_submit *sdio,
 	 * We need to zero out part of an fs block.  It is either at the
 	 * beginning or the end of the fs block.
 	 */
-	if (end) 
+	if (end)
 		this_chunk_blocks = dio_blocks_per_fs_block - this_chunk_blocks;
 
 	this_chunk_bytes = this_chunk_blocks << sdio->blkbits;
@@ -944,7 +966,13 @@ static int do_direct_IO(struct dio *dio, struct dio_submit *sdio,
 			unsigned this_chunk_bytes;	/* # of bytes mapped */
 			unsigned this_chunk_blocks;	/* # of blocks */
 			unsigned u;
-
+#ifdef CONFIG_CGROUP_IOLIMIT
+			if (dio->op == REQ_OP_WRITE) {
+				io_write_bandwidth_control(PAGE_SIZE);
+			} else {
+				io_read_bandwidth_control(PAGE_SIZE);
+			}
+#endif
 			if (sdio->blocks_available == 0) {
 				/*
 				 * Need to go and map some more disk

@@ -15,7 +15,28 @@ config CPU_IDLE
 if CPU_IDLE
 
 config CPU_IDLE_MULTIPLE_DRIVERS
-        bool
+        bool "Support multiple cpuidle drivers"
+        depends on CPU_IDLE
+        default n
+        help
+         Allows the cpuidle framework to use different drivers for each CPU.
+         This is useful if you have a system with different CPU latencies and
+         states. If unsure say N.
+
+config CPU_IDLE_TRIPPLE_DRIVERS
+        bool "Support tripple cpuidle drivers"
+        depends on CPU_IDLE_MULTIPLE_DRIVERS
+        default n
+        help
+         Allows the cpuidle framework to use different drivers for three clusters.
+		 If unsure say N.
+
+config HISI_IDLE_SLEEP
+        bool "Support cpu idlesleep vote"
+        depends on CPU_IDLE_MULTIPLE_DRIVERS
+        default n
+        help
+         Only used for s1 state(32k).
 
 config CPU_IDLE_GOV_LADDER
 	bool "Ladder governor (for periodic timer tick)"
@@ -29,6 +50,11 @@ config DT_IDLE_STATES
 menu "ARM CPU Idle Drivers"
 depends on ARM || ARM64
 source "drivers/cpuidle/Kconfig.arm"
+endmenu
+
+menu "ARM64 CPU Idle Drivers"
+depends on ARM64
+source "drivers/cpuidle/Kconfig.arm64"
 endmenu
 
 menu "MIPS CPU Idle Drivers"

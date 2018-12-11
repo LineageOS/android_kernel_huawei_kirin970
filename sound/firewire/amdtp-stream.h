@@ -29,8 +29,6 @@
  * @CIP_JUMBO_PAYLOAD: Only for in-stream. The number of data blocks in an
  *	packet is larger than IEC 61883-6 defines. Current implementation
  *	allows 5 times as large as IEC 61883-6 defines.
- * @CIP_HEADER_WITHOUT_EOH: Only for in-stream. CIP Header doesn't include
- *	valid EOH.
  */
 enum cip_flags {
 	CIP_NONBLOCKING		= 0x00,
@@ -41,7 +39,6 @@ enum cip_flags {
 	CIP_SKIP_DBC_ZERO_CHECK	= 0x10,
 	CIP_EMPTY_HAS_WRONG_DBC	= 0x20,
 	CIP_JUMBO_PAYLOAD	= 0x40,
-	CIP_HEADER_WITHOUT_EOH	= 0x80,
 };
 
 /**

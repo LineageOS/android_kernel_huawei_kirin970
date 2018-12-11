@@ -59,6 +59,9 @@ void blk_execute_rq_nowait(struct request_queue *q, struct gendisk *bd_disk,
 
 	rq->rq_disk = bd_disk;
 	rq->end_io = done;
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_request_execute_nowait(q, bd_disk, rq, at_head, done);
+#endif
 
 	/*
 	 * don't check dying flag for MQ because the request won't

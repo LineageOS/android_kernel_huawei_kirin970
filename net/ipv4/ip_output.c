@@ -81,6 +81,15 @@
 #include <linux/netlink.h>
 #include <linux/tcp.h>
 
+#ifdef CONFIG_HUAWEI_WIFI_WEIXIN_HONGBAO_ENABLE_PRIORITY
+#define WIFI_WEIXIN_HONGBAO_PROORITY 0x7
+extern uint8_t BST_FG_Proc_Send_RPacket_Priority(struct sock *pstSock);
+#endif
+
+#ifdef CONFIG_HUAWEI_BASTET
+int g_FastGrabDscp = 0;    /*fg app dscp value,get from hilink*/
+#endif
+
 static int
 ip_fragment(struct net *net, struct sock *sk, struct sk_buff *skb,
 	    unsigned int mtu,
@@ -470,6 +479,15 @@ packet_routed:
 	if (inet_opt && inet_opt->opt.is_strictroute && rt->rt_uses_gateway)
 		goto no_route;
 
+#ifdef CONFIG_HUAWEI_BASTET
+	/*if get dscp value and this socket belong to fg, modify dscp to support high pri transmission*/
+	if (g_FastGrabDscp != 0 && sk->fg_Spec > 0 && inet->tos == 0)
+	{
+		/*dscp is the highest 6 bits of tos*/
+		inet->tos = (((__u8)g_FastGrabDscp) << 2);
+	}
+#endif
+
 	/* OK, we know where to send it, allocate and build IP header. */
 	skb_push(skb, sizeof(struct iphdr) + (inet_opt ? inet_opt->opt.optlen : 0));
 	skb_reset_network_header(skb);
@@ -496,7 +514,13 @@ packet_routed:
 	/* TODO : should we use skb->sk here instead of sk ? */
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
-
+#ifdef CONFIG_HUAWEI_BASTET
+#ifdef CONFIG_HUAWEI_WIFI_WEIXIN_HONGBAO_ENABLE_PRIORITY
+	if(1 == BST_FG_Proc_Send_RPacket_Priority(sk)) {
+		skb->priority = WIFI_WEIXIN_HONGBAO_PROORITY;
+	}
+#endif
+#endif
 	res = ip_local_out(net, sk, skb);
 	rcu_read_unlock();
 	return res;
@@ -1098,7 +1122,8 @@ alloc_new_skb:
 		if (copy > length)
 			copy = length;
 
-		if (!(rt->dst.dev->features&NETIF_F_SG)) {
+		if (!(rt->dst.dev->features&NETIF_F_SG) &&
+		    skb_tailroom(skb) >= copy) {
 			unsigned int off;
 
 			off = skb->len;

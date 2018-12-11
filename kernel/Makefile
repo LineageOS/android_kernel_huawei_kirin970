@@ -70,6 +70,8 @@ obj-$(CONFIG_COMPAT) += compat.o
 obj-$(CONFIG_CGROUPS) += cgroup.o
 obj-$(CONFIG_CGROUP_FREEZER) += cgroup_freezer.o
 obj-$(CONFIG_CGROUP_PIDS) += cgroup_pids.o
+obj-$(CONFIG_HW_CGROUP_IONICE) += cgroup_ionice.o
+obj-$(CONFIG_CGROUP_IOLIMIT) += cgroup_io_limit.o
 obj-$(CONFIG_CPUSETS) += cpuset.o
 obj-$(CONFIG_UTS_NS) += utsname.o
 obj-$(CONFIG_USER_NS) += user_namespace.o
@@ -85,6 +87,8 @@ obj-$(CONFIG_GCOV_KERNEL) += gcov/
 obj-$(CONFIG_KCOV) += kcov.o
 obj-$(CONFIG_KPROBES) += kprobes.o
 obj-$(CONFIG_KGDB) += debug/
+obj-$(CONFIG_DETECT_HUAWEI_HUNG_TASK) += huawei_hung_task.o
+obj-$(CONFIG_DETECT_HUAWEI_HUNG_TASK) += huawei_init_watchdog.o
 obj-$(CONFIG_DETECT_HUNG_TASK) += hung_task.o
 obj-$(CONFIG_LOCKUP_DETECTOR) += watchdog.o
 obj-$(CONFIG_HARDLOCKUP_DETECTOR) += watchdog_hld.o
@@ -115,8 +119,15 @@ obj-$(CONFIG_JUMP_LABEL) += jump_label.o
 obj-$(CONFIG_CONTEXT_TRACKING) += context_tracking.o
 obj-$(CONFIG_TORTURE_TEST) += torture.o
 obj-$(CONFIG_MEMBARRIER) += membarrier.o
+obj-$(CONFIG_HW_CGROUP_PIDS) += cgroup_huawei/
 
 obj-$(CONFIG_HAS_IOMEM) += memremap.o
+obj-$(CONFIG_HW_VIP_THREAD) += hwcfs/
+obj-$(CONFIG_HW_VIP_THREAD) += cpu_netlink/
+obj-$(CONFIG_HW_CPULOAD_NOTI) += cpu_netlink/
+obj-$(CONFIG_HW_IAWARE_THREAD_BOOST) += cpu_netlink/
+
+obj-$(CONFIG_HW_CGROUP_WORKINGSET) += cgroup_workingset.o
 
 $(obj)/configs.o: $(obj)/config_data.h
 

@@ -33,6 +33,7 @@
 /* Code sharing between pci-quirks and xhci hcd */
 #include	"xhci-ext-caps.h"
 #include "pci-quirks.h"
+#include "xhci-local-mem.h"
 
 /* xHCI PCI Configuration Registers */
 #define XHCI_SBRN_OFFSET	(0x60)
@@ -1621,7 +1622,7 @@ struct xhci_hcd {
 #define XHCI_STATE_REMOVING	(1 << 2)
 	/* Statistics */
 	int			error_bitmask;
-	unsigned int		quirks;
+	u64		quirks;
 #define	XHCI_LINK_TRB_QUIRK	(1 << 0)
 #define XHCI_RESET_EP_QUIRK	(1 << 1)
 #define XHCI_NEC_HOST		(1 << 2)
@@ -1663,6 +1664,14 @@ struct xhci_hcd {
 /* Reserved. It was XHCI_U2_DISABLE_WAKE */
 #define XHCI_ASMEDIA_MODIFY_FLOWCONTROL	(1 << 28)
 
+#define XHCI_CTRL_NYET_ABNORMAL	(1 << 29)
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+#define XHCI_DISABLE_LPM	(1 << 30)
+#define XHCI_NOT_SUP_SG		(1ULL << 31)
+#define XHCI_HCD_LOCAL_MEM	(1ULL << 32)
+#endif
+#define XHCI_WARM_RESET_AFTER_INIT	(1ULL << 33)
+
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
 	/* There are two roothubs to keep track of bus suspend info for */
@@ -1689,6 +1698,16 @@ struct xhci_hcd {
 	u32			port_status_u0;
 /* Compliance Mode Timer Triggered every 2 seconds */
 #define COMP_MODE_RCVRY_MSECS 2000
+
+#ifdef CONFIG_HISI_DEBUG_FS
+	struct dentry		*debugfs_root;
+#endif
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+#define XHCI_DMA_POOL_NUM (9)
+	struct dma_pool		*pool[XHCI_DMA_POOL_NUM];
+	struct xhci_local_dma_manager dma_manager;
+#endif
 
 	/* platform-specific data -- must come last */
 	unsigned long		priv[0] __aligned(sizeof(s64));

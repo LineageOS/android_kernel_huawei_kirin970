@@ -26,6 +26,9 @@
 #define UFS_VENDOR_TOSHIBA     0x198
 #define UFS_VENDOR_SAMSUNG     0x1CE
 #define UFS_VENDOR_SKHYNIX     0x1AD
+#define UFS_VENDOR_HI1861	   0x8B6
+#define UFS_VENDOR_MICRON	   0x12C
+#define UFS_VENDOR_SANDISK	   0x145
 
 /**
  * ufs_device_info - ufs device details
@@ -34,6 +37,8 @@
  */
 struct ufs_device_info {
 	u16 wmanufacturerid;
+	u16 wmanufacturer_date;
+	u16 spec_version;	
 	char model[MAX_MODEL_LEN + 1];
 };
 
@@ -143,8 +148,13 @@ struct ufs_dev_fix {
  * PA_SaveConfigTime to >32us as per vendor recommendation.
  */
 #define UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME	(1 << 8)
+ /*
+ * Some UFS devices may not work properly in auto hibernate8.
+ */
 
 struct ufs_hba;
 void ufs_advertise_fixup_device(struct ufs_hba *hba);
 
+void ufs_get_geometry_info(struct ufs_hba *hba);
+void ufs_get_device_health_info(struct ufs_hba *hba);
 #endif /* UFS_QUIRKS_H_ */

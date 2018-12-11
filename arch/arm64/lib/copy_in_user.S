@@ -64,6 +64,7 @@
 	.endm
 
 end	.req	x5
+
 ENTRY(__arch_copy_in_user)
 	uaccess_enable_not_uao x3, x4, x5
 	add	end, x0, x2

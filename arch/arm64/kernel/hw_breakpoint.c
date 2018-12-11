@@ -498,6 +498,26 @@ static int arch_build_bp_info(struct perf_event *bp)
 	/* Address */
 	info->address = bp->attr.bp_addr;
 
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	/* Address Mask */
+	if (bp->attr.bp_addr_mask != ARM_WATCHPOINT_ADDR_MASK_0) {
+		if ((bp->attr.bp_addr_mask < ARM_WATCHPOINT_ADDR_MASK_3) ||
+			(bp->attr.bp_addr_mask > ARM_WATCHPOINT_ADDR_MASK_MAX)) {
+			/*1 and 2 is reserved, the max value is 31 */
+			return -EINVAL;
+		}
+
+		/* len should be LEN_8 */
+		if (info->ctrl.len != ARM_BREAKPOINT_LEN_8) {
+			return -EINVAL;
+		}
+	}
+
+	/* Address Mask */
+	info->ctrl.mask = bp->attr.bp_addr_mask;
+	info->ctrl.ssc = ARM_SSC_NON_SECURE;
+#endif
+
 	/*
 	 * Privilege
 	 * Note that we disallow combined EL0/EL1 breakpoints because
@@ -568,6 +588,15 @@ int arch_validate_hwbkpt_settings(struct perf_event *bp)
 
 	info->address &= ~alignment_mask;
 	info->ctrl.len <<= offset;
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	/* Address Mask */
+	if (info->ctrl.mask != ARM_WATCHPOINT_ADDR_MASK_0) {
+		if (info->address & ((1<< info->ctrl.mask) - 1)) {
+			/* addr is size aligned */
+			return -EINVAL;
+		}
+	}
+#endif
 
 	/*
 	 * Disallow per-task kernel breakpoints since these would
@@ -759,7 +788,6 @@ static int watchpoint_handler(unsigned long addr, unsigned int esr,
 		wp = slots[i];
 		if (wp == NULL)
 			continue;
-
 		/*
 		 * Check that the access type matches.
 		 * 0 => load, otherwise => store
@@ -773,6 +801,16 @@ static int watchpoint_handler(unsigned long addr, unsigned int esr,
 		val = read_wb_reg(AARCH64_DBG_REG_WVR, i);
 		ctrl_reg = read_wb_reg(AARCH64_DBG_REG_WCR, i);
 		decode_ctrl_reg(ctrl_reg, &ctrl);
+
+		info = counter_arch_bp(wp);
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+		/* check addr range */
+		if (info->ctrl.mask != ARM_WATCHPOINT_ADDR_MASK_0) {
+			if (val != (addr & ~((1 << info->ctrl.mask) - 1))) {
+				continue;
+			}
+		} else {
+#endif
 		dist = get_distance_from_watchpoint(addr, val, &ctrl);
 		if (dist < min_dist) {
 			min_dist = dist;
@@ -782,13 +820,21 @@ static int watchpoint_handler(unsigned long addr, unsigned int esr,
 		if (dist != 0)
 			continue;
 
-		info = counter_arch_bp(wp);
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+		}
+#endif
+
 		info->trigger = addr;
 		perf_bp_event(wp, regs);
 
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+		/* We need to handle the stepping */
+		step = 1;
+#else
 		/* Do we need to handle the stepping? */
 		if (is_default_overflow_handler(wp))
 			step = 1;
+#endif
 	}
 	if (min_dist > 0 && min_dist != -1) {
 		/* No exact match found. */
@@ -1026,3 +1072,4 @@ int hw_breakpoint_exceptions_notify(struct notifier_block *unused,
 {
 	return NOTIFY_DONE;
 }
+

@@ -28,7 +28,7 @@
 static inline const char *
 dwc3_gadget_ep_cmd_string(u8 cmd)
 {
-	switch (cmd) {
+	switch (DWC3_DEPCMD_CMD(cmd)) {
 	case DWC3_DEPCMD_DEPSTARTCFG:
 		return "Start New Configuration";
 	case DWC3_DEPCMD_ENDTRANSFER:

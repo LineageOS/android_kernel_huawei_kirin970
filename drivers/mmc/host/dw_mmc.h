@@ -13,7 +13,8 @@
 
 #ifndef _DW_MMC_H_
 #define _DW_MMC_H_
-
+#include <linux/mmc/dw_mmc.h>
+#include "dw_mmc_hisi.h"
 #define DW_MMC_240A		0x240a
 #define DW_MMC_280A		0x280a
 
@@ -56,6 +57,8 @@
 #define SDMMC_DSCADDR		0x094
 #define SDMMC_BUFADDR		0x098
 #define SDMMC_CDTHRCTL		0x100
+#define SDMMC_UHS_REG_EXT	0x108
+#define SDMMC_ENABLE_SHIFT	0x110
 #define SDMMC_DATA(x)		(x)
 /*
 * Registers to support idmac 64-bit address mode
@@ -68,6 +71,15 @@
 #define SDMMC_DSCADDRU		0x09c
 #define SDMMC_BUFADDRL		0x0A0
 #define SDMMC_BUFADDRU		0x0A4
+
+#define SDMMC_64_BIT_DMA		1
+#define SDMMC_32_BIT_DMA		0
+
+/*Flag that we need to chang sd clk to ppll3*/
+#ifdef CONFIG_SD_SDIO_CRC_RETUNING
+#define SD_RETUNING_ON  0x1
+#define SD_RETUNING_OFF  0x0
+#endif
 
 /*
  * Data offset is difference according to Version
@@ -142,6 +154,8 @@
 #define SDMMC_CMD_RESP_LONG		BIT(7)
 #define SDMMC_CMD_RESP_EXP		BIT(6)
 #define SDMMC_CMD_INDX(n)		((n) & 0x1F)
+#define SDMMC_CMD_ONLY_CLK		(SDMMC_CMD_START | SDMMC_CMD_UPD_CLK | \
+						SDMMC_CMD_PRV_DAT_WAIT)
 /* Status register defines */
 #define SDMMC_GET_FCNT(x)		(((x)>>17) & 0x1FFF)
 #define SDMMC_STATUS_DMA_REQ		BIT(31)
@@ -150,6 +164,7 @@
 #define SDMMC_SET_FIFOTH(m, r, t)	(((m) & 0x7) << 28 | \
 					 ((r) & 0xFFF) << 16 | \
 					 ((t) & 0xFFF))
+#define SDMMC_SET_RD_THLD(v, x)         (((v) & 0x1FFF) << 16 | (x))
 /* HCON register defines */
 #define DMA_INTERFACE_IDMA		(0x0)
 #define DMA_INTERFACE_DWDMA		(0x1)
@@ -159,6 +174,7 @@
 #define SDMMC_GET_SLOT_NUM(x)		((((x)>>1) & 0x1F) + 1)
 #define SDMMC_GET_HDATA_WIDTH(x)	(((x)>>7) & 0x7)
 #define SDMMC_GET_ADDR_CONFIG(x)	(((x)>>27) & 0x1)
+
 /* Internal DMAC interrupt defines */
 #define SDMMC_IDMAC_INT_AI		BIT(9)
 #define SDMMC_IDMAC_INT_NI		BIT(8)
@@ -184,6 +200,16 @@
 /* All ctrl reset bits */
 #define SDMMC_CTRL_ALL_RESET_FLAGS \
 	(SDMMC_CTRL_RESET | SDMMC_CTRL_FIFO_RESET | SDMMC_CTRL_DMA_RESET)
+
+/* FIFO register access macros. These should not change the data endian-ness
+ * as they are written to memory to be dealt with by the upper layers */
+#define mci_fifo_readw(__reg)	__raw_readw(__reg)
+#define mci_fifo_readl(__reg)	__raw_readl(__reg)
+#define mci_fifo_readq(__reg)	__raw_readq(__reg)
+
+#define mci_fifo_writew(__value, __reg)	__raw_writew(__reg, __value)
+#define mci_fifo_writel(__value, __reg)	__raw_writel(__reg, __value)
+#define mci_fifo_writeq(__value, __reg)	__raw_writeq(__reg, __value)
 
 /* FIFO register access macros. These should not change the data endian-ness
  * as they are written to memory to be dealt with by the upper layers */
@@ -226,7 +252,6 @@
 	(*(volatile u64 __force *)((dev)->regs + SDMMC_##reg))
 #define mci_writeq(dev, reg, value)			\
 	(*(volatile u64 __force *)((dev)->regs + SDMMC_##reg) = (value))
-
 #define __raw_writeq(__value, __reg) \
 	(*(volatile u64 __force *)(__reg) = (__value))
 #define __raw_readq(__reg) (*(volatile u64 __force *)(__reg))
@@ -234,7 +259,9 @@
 
 extern int dw_mci_probe(struct dw_mci *host);
 extern void dw_mci_remove(struct dw_mci *host);
-#ifdef CONFIG_PM_SLEEP
+extern void dw_mci_set_cd(struct dw_mci *host);
+
+#ifdef CONFIG_PM
 extern int dw_mci_suspend(struct dw_mci *host);
 extern int dw_mci_resume(struct dw_mci *host);
 #endif
@@ -243,6 +270,7 @@ extern int dw_mci_resume(struct dw_mci *host);
  * struct dw_mci_slot - MMC slot state
  * @mmc: The mmc_host representing this slot.
  * @host: The MMC controller this slot is using.
+ * @wp_gpio: If gpio_is_valid() we'll use this to read write protect.
  * @ctype: Card type for this slot.
  * @mrq: mmc_request currently being processed or waiting to be
  *	processed, or NULL when the slot is idle.
@@ -253,11 +281,14 @@ extern int dw_mci_resume(struct dw_mci *host);
  *	Keeping track of this helps us to avoid spamming the console.
  * @flags: Random state bits associated with the slot.
  * @id: Number of this slot.
- * @sdio_id: Number of this slot in the SDIO interrupt registers.
+  * @sdio_id: Number of this slot in the SDIO interrupt registers.
+ * @last_detect_state: Most recently observed card detect state.
  */
 struct dw_mci_slot {
 	struct mmc_host		*mmc;
 	struct dw_mci		*host;
+
+	int			wp_gpio;
 
 	u32			ctype;
 
@@ -265,15 +296,14 @@ struct dw_mci_slot {
 	struct list_head	queue_node;
 
 	unsigned int		clock;
-	unsigned int		__clk_old;
-
 	unsigned long		flags;
 #define DW_MMC_CARD_PRESENT	0
 #define DW_MMC_CARD_NEED_INIT	1
 #define DW_MMC_CARD_NO_LOW_PWR	2
 #define DW_MMC_CARD_NO_USE_HOLD 3
 	int			id;
-	int			sdio_id;
+	int			last_detect_state;
+	int         sdio_wakelog_switch;
 };
 
 /**
@@ -282,7 +312,6 @@ struct dw_mci_slot {
  * @init: early implementation specific initialization.
  * @set_ios: handle bus specific extensions.
  * @parse_dt: parse implementation specific device tree properties.
- * @execute_tuning: implementation specific tuning procedure.
  *
  * Provide controller implementation specific extensions. The usage of this
  * data structure is fully optional and usage of each member in this structure
@@ -291,12 +320,25 @@ struct dw_mci_slot {
 struct dw_mci_drv_data {
 	unsigned long	*caps;
 	int		(*init)(struct dw_mci *host);
+	int		(*setup_clock)(struct dw_mci *host);
+	void		(*prepare_command)(struct dw_mci *host, u32 *cmdr);
 	void		(*set_ios)(struct dw_mci *host, struct mmc_ios *ios);
 	int		(*parse_dt)(struct dw_mci *host);
-	int		(*execute_tuning)(struct dw_mci_slot *slot, u32 opcode);
+
 	int		(*prepare_hs400_tuning)(struct dw_mci *host,
 						struct mmc_ios *ios);
 	int		(*switch_voltage)(struct mmc_host *mmc,
 					  struct mmc_ios *ios);
+
+	int		(*cd_detect_init)(struct dw_mci *host);
+
+	int		(*tuning_find_condition)(struct dw_mci *host, int timing);
+	void		(*tuning_set_current_state)(struct dw_mci *host, int ok);
+	int		(*tuning_move)(struct dw_mci *host, int timing, int start);
+	int		(*slowdown_clk)(struct dw_mci *host, int timing);
+	int		(*execute_tuning)(struct dw_mci_slot *slot,u32 opcode,struct dw_mci_tuning_data *tuning_data);
+	int		(*start_signal_voltage_switch)(struct mmc_host *mmc,struct mmc_ios *ios);
+	void		(*work_fail_reset)(struct dw_mci *host);
+
 };
 #endif /* _DW_MMC_H_ */

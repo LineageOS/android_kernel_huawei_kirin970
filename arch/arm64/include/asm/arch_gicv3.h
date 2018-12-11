@@ -20,6 +20,7 @@
 
 #include <asm/sysreg.h>
 
+#define MPIDR			    sys_reg(3, 0,  0,  0,  5)
 #define ICC_EOIR1_EL1			sys_reg(3, 0, 12, 12, 1)
 #define ICC_DIR_EL1			sys_reg(3, 0, 12, 11, 1)
 #define ICC_IAR1_EL1			sys_reg(3, 0, 12, 12, 0)
@@ -135,7 +136,15 @@ static inline u64 gic_read_iar_common(void)
 	dsb(sy);
 	return irqstat;
 }
+static inline u32 gic_read_coreid(void)
+{
+	u32 core_id;
 
+	asm volatile("mrs_s %0, " __stringify(MPIDR) : "=r" (core_id));
+	dsb(sy);
+
+	return core_id;
+}
 /*
  * Cavium ThunderX erratum 23154
  *

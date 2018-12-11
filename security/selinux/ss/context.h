@@ -42,12 +42,14 @@ static inline int mls_context_cpy(struct context *dst, struct context *src)
 	int rc;
 
 	dst->range.level[0].sens = src->range.level[0].sens;
-	rc = ebitmap_cpy(&dst->range.level[0].cat, &src->range.level[0].cat);
+	rc = ebitmap_cpy(&dst->range.level[0].cat,
+			 &src->range.level[0].cat, false);
 	if (rc)
 		goto out;
 
 	dst->range.level[1].sens = src->range.level[1].sens;
-	rc = ebitmap_cpy(&dst->range.level[1].cat, &src->range.level[1].cat);
+	rc = ebitmap_cpy(&dst->range.level[1].cat,
+			 &src->range.level[1].cat, false);
 	if (rc)
 		ebitmap_destroy(&dst->range.level[0].cat);
 out:
@@ -62,12 +64,14 @@ static inline int mls_context_cpy_low(struct context *dst, struct context *src)
 	int rc;
 
 	dst->range.level[0].sens = src->range.level[0].sens;
-	rc = ebitmap_cpy(&dst->range.level[0].cat, &src->range.level[0].cat);
+	rc = ebitmap_cpy(&dst->range.level[0].cat,
+			 &src->range.level[0].cat, false);
 	if (rc)
 		goto out;
 
 	dst->range.level[1].sens = src->range.level[0].sens;
-	rc = ebitmap_cpy(&dst->range.level[1].cat, &src->range.level[0].cat);
+	rc = ebitmap_cpy(&dst->range.level[1].cat,
+			 &src->range.level[0].cat, false);
 	if (rc)
 		ebitmap_destroy(&dst->range.level[0].cat);
 out:
@@ -82,12 +86,14 @@ static inline int mls_context_cpy_high(struct context *dst, struct context *src)
 	int rc;
 
 	dst->range.level[0].sens = src->range.level[1].sens;
-	rc = ebitmap_cpy(&dst->range.level[0].cat, &src->range.level[1].cat);
+	rc = ebitmap_cpy(&dst->range.level[0].cat,
+			 &src->range.level[1].cat, HISI_SELINUX_EBITMAP_RO);
 	if (rc)
 		goto out;
 
 	dst->range.level[1].sens = src->range.level[1].sens;
-	rc = ebitmap_cpy(&dst->range.level[1].cat, &src->range.level[1].cat);
+	rc = ebitmap_cpy(&dst->range.level[1].cat,
+			 &src->range.level[1].cat, HISI_SELINUX_EBITMAP_RO);
 	if (rc)
 		ebitmap_destroy(&dst->range.level[0].cat);
 out:

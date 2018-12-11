@@ -47,7 +47,7 @@ struct cma *dma_contiguous_default_area;
  * should use cma= kernel parameter.
  */
 static const phys_addr_t size_bytes = (phys_addr_t)CMA_SIZE_MBYTES * SZ_1M;
-static phys_addr_t size_cmdline = -1;
+static phys_addr_t size_cmdline = -1;/*lint !e570*/
 static phys_addr_t base_cmdline;
 static phys_addr_t limit_cmdline;
 
@@ -113,7 +113,7 @@ void __init dma_contiguous_reserve(phys_addr_t limit)
 
 	pr_debug("%s(limit %08lx)\n", __func__, (unsigned long)limit);
 
-	if (size_cmdline != -1) {
+	if (size_cmdline != -1) {/*lint !e650*/
 		selected_size = size_cmdline;
 		selected_base = base_cmdline;
 		selected_limit = min_not_zero(limit_cmdline, limit);
@@ -245,7 +245,10 @@ static int __init rmem_cma_setup(struct reserved_mem *rmem)
 	phys_addr_t align = PAGE_SIZE << max(MAX_ORDER - 1, pageblock_order);
 	phys_addr_t mask = align - 1;
 	unsigned long node = rmem->fdt_node;
+	int len;
+	unsigned long long order_per_bit = 0;
 	struct cma *cma;
+	const __be32 *prop;
 	int err;
 
 	if (!of_get_flat_dt_prop(node, "reusable", NULL) ||
@@ -257,7 +260,11 @@ static int __init rmem_cma_setup(struct reserved_mem *rmem)
 		return -EINVAL;
 	}
 
-	err = cma_init_reserved_mem(rmem->base, rmem->size, 0, &cma);
+	prop = of_get_flat_dt_prop(node, "order-per-bit", &len);
+	if (prop)
+		order_per_bit = of_read_number(prop, len / 4);
+
+	err = cma_init_reserved_mem(rmem->base, rmem->size, (unsigned int)order_per_bit, &cma);
 	if (err) {
 		pr_err("Reserved memory: unable to setup CMA region\n");
 		return err;

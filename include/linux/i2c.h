@@ -595,6 +595,10 @@ i2c_parent_is_i2c_adapter(const struct i2c_adapter *adapter)
 
 int i2c_for_each_dev(void *data, int (*fn)(struct device *, void *));
 
+#ifdef CONFIG_HUAWEI_TS
+int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr);
+#endif
+
 /* Adapter locking functions, exported for shared pin cases */
 #define I2C_LOCK_ROOT_ADAPTER BIT(0)
 #define I2C_LOCK_SEGMENT      BIT(1)

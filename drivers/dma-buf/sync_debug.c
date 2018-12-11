@@ -132,7 +132,7 @@ static void sync_print_sync_file(struct seq_file *s,
 {
 	int i;
 
-	seq_printf(s, "[%p] %s: %s\n", sync_file, sync_file->name,
+	seq_printf(s, "[%pK] %s: %s\n", sync_file, sync_file->name,
 		   sync_status_str(fence_get_status(sync_file->fence)));
 
 	if (fence_is_array(sync_file->fence)) {

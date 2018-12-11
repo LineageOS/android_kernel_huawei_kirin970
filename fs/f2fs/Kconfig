@@ -18,7 +18,7 @@ config F2FS_FS
 
 config F2FS_STAT_FS
 	bool "F2FS Status Information"
-	depends on F2FS_FS && DEBUG_FS
+	depends on F2FS_FS# && DEBUG_FS
 	default y
 	help
 	  /sys/kernel/debug/f2fs/ contains information about all the partitions
@@ -95,6 +95,12 @@ config F2FS_IO_TRACE
 
 	  If unsure, say N.
 
+config HUAWEI_F2FS_DSM
+	bool "Listen f2fs kernel err"
+	default n
+	help
+		use huawei fs log radar
+
 config F2FS_FAULT_INJECTION
 	bool "F2FS fault injection facility"
 	depends on F2FS_FS
@@ -102,3 +108,22 @@ config F2FS_FAULT_INJECTION
 	  Test F2FS to inject faults such as ENOMEM, ENOSPC, and so on.
 
 	  If unsure, say N.
+config HISI_F2FS_MTIME
+	bool "reduce freq to update mtime"
+	default n
+	help
+		reduce freq to update mtime
+
+config F2FS_JOURNAL_APPEND
+	bool "F2FS append sit and nat journal size"
+	depends on F2FS_FS
+	default n
+	help
+	  append 2 blocks for sit and nat journal
+
+config F2FS_GRADING_SSR
+	bool "F2FS grading ssr"
+	depends on F2FS_FS
+	default n
+	help
+	  use grading ssr to improve the end performance

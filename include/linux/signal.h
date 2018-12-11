@@ -456,4 +456,8 @@ struct seq_file;
 extern void render_sigset_t(struct seq_file *, const char *, sigset_t *);
 #endif
 
+#ifdef CONFIG_HISI_SWAP_ZDATA
+int reclaim_sigusr_pending(struct task_struct *tsk);
+#endif
+
 #endif /* _LINUX_SIGNAL_H */

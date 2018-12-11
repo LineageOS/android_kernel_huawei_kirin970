@@ -31,6 +31,7 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include "i2c-designware-core.h"
+#include <linux/arm-smccc.h>
 
 /*
  * Registers offset
@@ -66,6 +67,10 @@
 #define DW_IC_RXFLR		0x78
 #define DW_IC_SDA_HOLD		0x7c
 #define DW_IC_TX_ABRT_SOURCE	0x80
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define IC_FS_SPKLEN        0xA0
+#define IC_HS_SPKLEN        0xA4
+#endif
 #define DW_IC_ENABLE_STATUS	0x9c
 #define DW_IC_COMP_PARAM_1	0xf4
 #define DW_IC_COMP_VERSION	0xf8
@@ -112,6 +117,12 @@
 
 #define TIMEOUT			20 /* ms */
 
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define DW_IC_TX_AND_RX_EMPTY		0x4
+#define DW_IC_TX_FIFO_DATA_MASK	0x3f
+#define DW_IC_RX_FIFO_DATA_MASK	0x3f
+#define WAIT_FOR_COMPLETION		((HZ*totallen)/400+HZ)   /* wait 1s add 2.5ms every byte. */
+#endif
 /*
  * hardware abort codes from the DW_IC_TX_ABRT_SOURCE register
  *
@@ -124,11 +135,20 @@
 #define ABRT_TXDATA_NOACK	3
 #define ABRT_GCALL_NOACK	4
 #define ABRT_GCALL_READ		5
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define ABRT_HS_ACKDET		6
+#endif
 #define ABRT_SBYTE_ACKDET	7
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define ABRT_HS_NORSTRT		8
+#endif
 #define ABRT_SBYTE_NORSTRT	9
 #define ABRT_10B_RD_NORSTRT	10
 #define ABRT_MASTER_DIS		11
 #define ARB_LOST		12
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define ABRT_USER_ABRT		16
+#endif
 
 #define DW_IC_TX_ABRT_7B_ADDR_NOACK	(1UL << ABRT_7B_ADDR_NOACK)
 #define DW_IC_TX_ABRT_10ADDR1_NOACK	(1UL << ABRT_10ADDR1_NOACK)
@@ -148,6 +168,57 @@
 					 DW_IC_TX_ABRT_TXDATA_NOACK | \
 					 DW_IC_TX_ABRT_GCALL_NOACK)
 
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+#define HISI_I2C_READ_REG		0xc5010000
+#define HISI_I2C_WRITE_REG		0xc5010001
+#define HISI_I2C_XFER_LOCK		0xc5010002
+#define HISI_I2C_XFER_UNLOCK	0xc5010003
+
+static u32 hisi_secure_dw_readl(int offset)
+{
+	struct arm_smccc_res res;
+	arm_smccc_1_1_smc(HISI_I2C_READ_REG, offset, &res);//lint !e1514
+	return (u32)res.a1;
+}
+
+static void hisi_secure_dw_writel(u32 b, int offset)
+{
+	struct arm_smccc_res res;
+	arm_smccc_1_1_smc(HISI_I2C_WRITE_REG, b, offset, &res);//lint !e1514
+	return;
+}
+
+static char *abort_sources[] = {
+	[ABRT_7B_ADDR_NOACK] =
+		"slave address not acknowledged (7bit mode)",
+	[ABRT_10ADDR1_NOACK] =
+		"first address byte not acknowledged (10bit mode)",
+	[ABRT_10ADDR2_NOACK] =
+		"second address byte not acknowledged (10bit mode)",
+	[ABRT_TXDATA_NOACK] =
+		"data not acknowledged",
+	[ABRT_GCALL_NOACK] =
+		"no acknowledgement for a general call",
+	[ABRT_GCALL_READ] =
+		"read after general call",
+	[ABRT_HS_ACKDET] =
+	"the high-speed master code was achnowledged",
+	[ABRT_SBYTE_ACKDET] =
+		"start byte acknowledged",
+	[ABRT_HS_NORSTRT] =
+	"the restart is disabled and the user is trying to use the master to transfer data in high-speed mode",
+	[ABRT_SBYTE_NORSTRT] =
+		"trying to send start byte when restart is disabled",
+	[ABRT_10B_RD_NORSTRT] =
+		"trying to read when restart is disabled (10bit mode)",
+	[ABRT_MASTER_DIS] =
+		"trying to use disabled adapter",
+	[ARB_LOST] =
+	"lost arbitration",
+	[ABRT_USER_ABRT] =
+	"master has detected the transfer abort(IC_ENABLE(1))",
+};
+#else
 static char *abort_sources[] = {
 	[ABRT_7B_ADDR_NOACK] =
 		"slave address not acknowledged (7bit mode)",
@@ -172,16 +243,25 @@ static char *abort_sources[] = {
 	[ARB_LOST] =
 		"lost arbitration",
 };
+#endif
 
-static u32 dw_readl(struct dw_i2c_dev *dev, int offset)
+u32 dw_readl(struct dw_i2c_dev *dev, int offset)
 {
 	u32 value;
 
-	if (dev->accessor_flags & ACCESS_16BIT)
-		value = readw_relaxed(dev->base + offset) |
-			(readw_relaxed(dev->base + offset + 2) << 16);
-	else
-		value = readl_relaxed(dev->base + offset);
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	if (dev->secure_mode) {
+		value = hisi_secure_dw_readl(offset);
+	} else {
+#endif
+		if (dev->accessor_flags & ACCESS_16BIT)
+			value = readw_relaxed(dev->base + offset) |
+				(readw_relaxed(dev->base + offset + 2) << 16);
+		else
+			value = readl_relaxed(dev->base + offset);
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	}
+#endif
 
 	if (dev->accessor_flags & ACCESS_SWAP)
 		return swab32(value);
@@ -189,20 +269,28 @@ static u32 dw_readl(struct dw_i2c_dev *dev, int offset)
 		return value;
 }
 
-static void dw_writel(struct dw_i2c_dev *dev, u32 b, int offset)
+void dw_writel(struct dw_i2c_dev *dev, u32 b, int offset)
 {
 	if (dev->accessor_flags & ACCESS_SWAP)
 		b = swab32(b);
 
-	if (dev->accessor_flags & ACCESS_16BIT) {
-		writew_relaxed((u16)b, dev->base + offset);
-		writew_relaxed((u16)(b >> 16), dev->base + offset + 2);
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	if (dev->secure_mode) {
+		hisi_secure_dw_writel(b, offset);
 	} else {
-		writel_relaxed(b, dev->base + offset);
+#endif
+		if (dev->accessor_flags & ACCESS_16BIT) {
+			writew_relaxed((u16)b, dev->base + offset);
+			writew_relaxed((u16)(b >> 16), dev->base + offset + 2);
+		} else {
+			writel_relaxed(b, dev->base + offset);
+		}
+#if defined CONFIG_HISI_I2C_DESIGNWARE
 	}
+#endif
 }
 
-static u32
+u32
 i2c_dw_scl_hcnt(u32 ic_clk, u32 tSYMBOL, u32 tf, int cond, int offset)
 {
 	/*
@@ -222,7 +310,7 @@ i2c_dw_scl_hcnt(u32 ic_clk, u32 tSYMBOL, u32 tf, int cond, int offset)
 		 *
 		 * If your hardware is free from tHD;STA issue, try this one.
 		 */
-		return (ic_clk * tSYMBOL + 500000) / 1000000 - 8 + offset;
+		return (ic_clk * tSYMBOL + 500000) / 1000000 - 8 + offset;/* [false alarm]:native code */
 	else
 		/*
 		 * Conditional expression:
@@ -239,10 +327,10 @@ i2c_dw_scl_hcnt(u32 ic_clk, u32 tSYMBOL, u32 tf, int cond, int offset)
 		 * is the same as described in i2c_dw_scl_lcnt().
 		 */
 		return (ic_clk * (tSYMBOL + tf) + 500000) / 1000000
-			- 3 + offset;
+			- 3 + offset;/* [false alarm]:native code */
 }
 
-static u32 i2c_dw_scl_lcnt(u32 ic_clk, u32 tLOW, u32 tf, int offset)
+u32 i2c_dw_scl_lcnt(u32 ic_clk, u32 tLOW, u32 tf, int offset)
 {
 	/*
 	 * Conditional expression:
@@ -441,9 +529,14 @@ int i2c_dw_init(struct dw_i2c_dev *dev)
 	}
 
 	/* Configure Tx/Rx FIFO threshold levels */
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	dw_writel(dev, 15, DW_IC_TX_TL);
+	dw_writel(dev, 15, DW_IC_RX_TL);
+	i2c_dw_dma_fifo_cfg(dev);
+#else
 	dw_writel(dev, dev->tx_fifo_depth / 2, DW_IC_TX_TL);
 	dw_writel(dev, 0, DW_IC_RX_TL);
-
+#endif
 	/* configure the i2c master */
 	dw_writel(dev, dev->master_cfg , DW_IC_CON);
 
@@ -511,7 +604,11 @@ static void i2c_dw_xfer_init(struct dw_i2c_dev *dev)
 
 	/* Clear and enable interrupts */
 	dw_readl(dev, DW_IC_CLR_INTR);
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	dw_writel(dev, DW_IC_INTR_TX_ABRT | DW_IC_INTR_STOP_DET, DW_IC_INTR_MASK);
+#else
 	dw_writel(dev, DW_IC_INTR_DEFAULT_MASK, DW_IC_INTR_MASK);
+#endif
 }
 
 /*
@@ -584,7 +681,11 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 				cmd |= BIT(9);
 
 			if (need_restart) {
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+				/* no need to set this bit */
+#else
 				cmd |= BIT(10);
+#endif
 				need_restart = false;
 			}
 
@@ -690,6 +791,170 @@ static int i2c_dw_handle_tx_abort(struct dw_i2c_dev *dev)
 /*
  * Prepare controller for a transaction and call i2c_dw_xfer_msg
  */
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+int
+i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+{
+	struct dw_i2c_dev *dev = i2c_get_adapdata(adap);
+	struct dw_hisi_controller *controller = dev->priv_data;
+	int totallen = 0;
+	int ret;
+	int r;
+
+	if (!controller) {
+		dev_err(dev->dev, "%s: i2c contrller do not be init.\n", __func__);
+		return -ENODEV;
+	}
+
+	mutex_lock(&dev->lock);
+
+	r = clk_enable(dev->clk);
+	if (r) {
+		dev_warn(dev->dev, "Unable to enable clock!\n");
+		mutex_unlock(&dev->lock);
+		return  -EINVAL;
+	}
+
+	if (dev->setpin) {
+		r = dw_hisi_pins_ctrl(dev, PINCTRL_STATE_DEFAULT);
+		if (r < 0)
+			dev_warn(dev->dev,
+					 "pins are not configured from the driver\n");
+	}
+
+	reinit_completion(&dev->cmd_complete);
+	dev->msgs = msgs;
+	dev->msgs_num = num;
+	dev->cmd_err = 0;
+	dev->msg_write_idx = 0;
+	dev->msg_read_idx = 0;
+	dev->msg_err = 0;
+	dev->status = STATUS_IDLE;
+	dev->abort_source = 0;
+	dev->rx_outstanding = 0;
+
+	controller->using_tx_dma = false;
+	controller->using_rx_dma = false;
+	controller->dmarx.buf = NULL;
+	controller->dmatx.buf = NULL;
+	controller->using_dma = false;
+
+	ret = i2c_dw_wait_bus_not_busy(dev);
+	if (ret < 0)
+		goto done;
+
+	/* start the transfers */
+	i2c_dw_xfer_init(dev);
+
+	if ((DW_IC_TX_AND_RX_EMPTY != (dw_readl(dev, DW_IC_STATUS) & (DW_IC_INTR_TX_OVER | DW_IC_INTR_RX_FULL)))
+			|| (dw_readl(dev, DW_IC_TXFLR) & DW_IC_TX_FIFO_DATA_MASK)
+			|| (dw_readl(dev, DW_IC_RXFLR) & DW_IC_RX_FIFO_DATA_MASK)) {
+		dev_err(dev->dev,  "rx or tx fifo is not zero.\n");
+		if (controller->reset_controller)
+			controller->reset_controller(dev);
+		ret = -EAGAIN;
+		goto done;
+	}
+
+	if (i2c_dw_xfer_msg_dma(dev, &totallen) < 0) {
+		if (dev->msg_err < 0) {
+			ret = dev->msg_err;
+			goto done;
+		}
+
+		dw_writel(dev, DW_IC_INTR_DEFAULT_MASK, DW_IC_INTR_MASK);
+	}
+
+	/* wait for tx to complete */
+	ret = wait_for_completion_timeout(&dev->cmd_complete, WAIT_FOR_COMPLETION);
+	if (ret == 0) {
+		int retry_num = 20;
+		dev_err(dev->dev, "controller timed out\n");
+
+		do {
+			dw_writel(dev, 0, DW_IC_INTR_MASK);
+			msleep(5);
+		} while ((controller->irq_is_run != 0) && (retry_num-- != 0));
+		if (controller->irq_is_run != 0) {
+			dev_err(dev->dev, "Isr is runing, can't reset I2C IP.\n");
+		} else {
+			if (controller->reset_controller)
+				controller->reset_controller(dev);
+		}
+
+		ret = -ETIMEDOUT;
+		goto done;
+	} else if (ret < 0)
+		goto done;
+
+	if (dev->msg_err) {
+		ret = dev->msg_err;
+		goto done;
+	}
+
+	if ((!dev->cmd_err) && (controller->using_dma)) {
+		ret = wait_for_completion_timeout(&controller->dma_complete, WAIT_FOR_COMPLETION);
+		if (ret == 0) {
+			dev_err(dev->dev, "wait for dma complete timed out, transfer %d, len = "
+					"%d, slave_addr = 0x%x, clk = %lu.\n", WAIT_FOR_COMPLETION,
+					totallen, msgs[0].addr, clk_get_rate(dev->clk));
+			if (controller->reset_controller)
+				controller->reset_controller(dev);
+			ret = -ETIMEDOUT;
+			goto done;
+		}
+	}
+
+	/* no error */
+	if (likely(!dev->cmd_err)) {
+		if ((dev->status & (STATUS_READ_IN_PROGRESS|STATUS_WRITE_IN_PROGRESS))
+				|| (DW_IC_INTR_TX_EMPTY == (dw_readl(dev, DW_IC_INTR_MASK) & DW_IC_INTR_TX_EMPTY))) {
+			dev_err(dev->dev, "write or read is not complete, status 0x%x, len = %d.\n", dev->status, totallen);
+			ret = -EAGAIN;
+		} else {
+			ret = num;
+			controller->timeout_count = 0;
+		}
+		goto done;
+	}
+
+	/* We have an error */
+	if (dev->cmd_err == DW_IC_ERR_TX_ABRT) {
+		ret = i2c_dw_handle_tx_abort(dev);
+		goto done;
+	}
+	ret = -EIO;
+
+done:
+	i2c_dw_dma_clear(dev);
+
+	if (-ETIMEDOUT == ret) {
+		if (controller->recover_bus)
+			controller->recover_bus(adap);
+		else if (adap->bus_recovery_info && adap->bus_recovery_info->recover_bus)
+			ret = adap->bus_recovery_info->recover_bus(adap);
+		else
+			dev_err(dev->dev, "no recovered routine\n");
+		ret = -EAGAIN;/*lint !e838  */
+	}
+
+	clk_disable(dev->clk);
+
+	if (dev->setpin) {
+		r = dw_hisi_pins_ctrl(dev, PINCTRL_STATE_IDLE);
+		if (r < 0)
+			dev_warn(dev->dev,
+					 "pins are not configured from the driver\n");
+	}
+
+	mutex_unlock(&dev->lock);
+	if (ret < 0) {
+		dev_err(dev->dev, "error info %d, slave addr 0x%x.\n", ret, msgs[0].addr);
+	}
+
+	return ret;
+}
+#else
 static int
 i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 {
@@ -773,13 +1038,15 @@ done_nolock:
 
 	return ret;
 }
+#endif
+EXPORT_SYMBOL_GPL(i2c_dw_xfer);
 
-static u32 i2c_dw_func(struct i2c_adapter *adap)
+u32 i2c_dw_func(struct i2c_adapter *adap)
 {
 	struct dw_i2c_dev *dev = i2c_get_adapdata(adap);
 	return dev->functionality;
 }
-
+EXPORT_SYMBOL_GPL(i2c_dw_func);
 static struct i2c_algorithm i2c_dw_algo = {
 	.master_xfer	= i2c_dw_xfer,
 	.functionality	= i2c_dw_func,
@@ -844,11 +1111,19 @@ static u32 i2c_dw_read_clear_intrbits(struct dw_i2c_dev *dev)
  * Interrupt service routine. This gets called whenever an I2C interrupt
  * occurs.
  */
-static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
+irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 {
 	struct dw_i2c_dev *dev = dev_id;
 	u32 stat, enabled;
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	struct dw_hisi_controller *controller = dev->priv_data;
 
+	if (!controller) {
+		dev_err(dev->dev, "%s: i2c contrller do not be init.\n", __func__);
+		return IRQ_HANDLED;
+	}
+	controller->irq_is_run = 1;
+#endif
 	enabled = dw_readl(dev, DW_IC_ENABLE);
 	stat = dw_readl(dev, DW_IC_RAW_INTR_STAT);
 	dev_dbg(dev->dev, "%s: enabled=%#x stat=%#x\n", __func__, enabled, stat);
@@ -872,6 +1147,14 @@ static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 	if (stat & DW_IC_INTR_RX_FULL)
 		i2c_dw_read(dev);
 
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	if ((stat & DW_IC_INTR_STOP_DET)) {
+		if (!(controller->using_dma))
+			i2c_dw_read(dev);
+		goto tx_aborted;
+	}
+#endif
+
 	if (stat & DW_IC_INTR_TX_EMPTY)
 		i2c_dw_xfer_msg(dev);
 
@@ -882,17 +1165,37 @@ static irqreturn_t i2c_dw_isr(int this_irq, void *dev_id)
 	 */
 
 tx_aborted:
-	if ((stat & (DW_IC_INTR_TX_ABRT | DW_IC_INTR_STOP_DET)) || dev->msg_err)
+	if ((stat & (DW_IC_INTR_TX_ABRT | DW_IC_INTR_STOP_DET)) || dev->msg_err) {
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+		dw_writel(dev, 0, DW_IC_INTR_MASK);
+#endif
 		complete(&dev->cmd_complete);
+	}
 	else if (unlikely(dev->accessor_flags & ACCESS_INTR_MASK)) {
 		/* workaround to trigger pending interrupt */
 		stat = dw_readl(dev, DW_IC_INTR_MASK);
 		i2c_dw_disable_int(dev);
 		dw_writel(dev, stat, DW_IC_INTR_MASK);
 	}
-
+#if defined CONFIG_HISI_I2C_DESIGNWARE
+	controller->irq_is_run = 0;
+#endif
 	return IRQ_HANDLED;
 }
+EXPORT_SYMBOL_GPL(i2c_dw_isr);
+
+void i2c_dw_enable(struct dw_i2c_dev *dev)
+{
+       /* Enable the adapter */
+	__i2c_dw_enable(dev, true);
+}
+EXPORT_SYMBOL_GPL(i2c_dw_enable);
+
+u32 i2c_dw_is_enabled(struct dw_i2c_dev *dev)
+{
+	return dw_readl(dev, DW_IC_ENABLE);
+}
+EXPORT_SYMBOL_GPL(i2c_dw_is_enabled);
 
 void i2c_dw_disable(struct dw_i2c_dev *dev)
 {
@@ -904,6 +1207,12 @@ void i2c_dw_disable(struct dw_i2c_dev *dev)
 	dw_readl(dev, DW_IC_CLR_INTR);
 }
 EXPORT_SYMBOL_GPL(i2c_dw_disable);
+
+void i2c_dw_clear_int(struct dw_i2c_dev *dev)
+{
+	dw_readl(dev, DW_IC_CLR_INTR);
+}
+EXPORT_SYMBOL_GPL(i2c_dw_clear_int);
 
 void i2c_dw_disable_int(struct dw_i2c_dev *dev)
 {
@@ -928,8 +1237,8 @@ int i2c_dw_probe(struct dw_i2c_dev *dev)
 	if (r)
 		return r;
 
-	snprintf(adap->name, sizeof(adap->name),
-		 "Synopsys DesignWare I2C adapter");
+	snprintf(adap->name, sizeof(adap->name), /* unsafe_function_ignore: snprintf  */
+		"Synopsys DesignWare I2C adapter");
 	adap->retries = 3;
 	adap->algo = &i2c_dw_algo;
 	adap->dev.parent = dev->dev;

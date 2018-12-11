@@ -44,6 +44,7 @@
 #include <linux/hardirq.h>
 #include <linux/jiffies.h>
 #include <linux/workqueue.h>
+#include <linux/hisi/mntn_dump.h>
 
 #include "internal.h"
 
@@ -215,6 +216,30 @@ error:
 	return ret;
 }
 
+static void registe_info_to_mntndump(void)
+{
+	int ret;
+	struct mdump_pstore *head;
+
+	if (!big_oops_buf || !big_oops_buf_sz)
+		return;
+
+	ret = register_mntn_dump(MNTN_DUMP_PSTORE_RAMOOPS,
+		(unsigned int)sizeof(struct mdump_pstore), (void **)&head);
+	if (ret) {
+		pr_err("register compression buf info fail\n");
+		return;
+	}
+	if (!head) {
+		pr_err("head is NULL!\n");
+		return;
+	}
+
+	head->magic = MNTNDUMP_MAGIC;
+	head->ramoops_addr = virt_to_phys(big_oops_buf);
+	head->ramoops_size = big_oops_buf_sz;
+}
+
 static void allocate_zlib(void)
 {
 	size_t size;
@@ -256,6 +281,7 @@ static void allocate_zlib(void)
 		stream.workspace = NULL;
 	}
 
+	registe_info_to_mntndump();
 }
 
 static void free_zlib(void)
@@ -493,6 +519,10 @@ static void pstore_dump(struct kmsg_dumper *dumper,
 		if (!is_locked) {
 			pr_err("pstore dump routine blocked in %s path, may corrupt error record\n"
 				       , in_nmi() ? "NMI" : why);
+			/* If not return,
+			 * data abort will happen when two threads call pstore_dump at the same time
+			 */
+			return;
 		}
 	} else {
 		spin_lock_irqsave(&psinfo->buf_lock, flags);

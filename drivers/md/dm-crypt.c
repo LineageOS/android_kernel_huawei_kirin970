@@ -34,6 +34,13 @@
 
 #define DM_MSG_PREFIX "crypt"
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+#include <trace/iotrace.h>
+DEFINE_TRACE(block_crypt_dec_pending);
+DEFINE_TRACE(block_kcryptd_crypt);
+DEFINE_TRACE(block_crypt_map);
+#endif
+
 /*
  * context holding the current state of a multi-part conversion
  */
@@ -1080,6 +1087,10 @@ static void crypt_dec_pending(struct dm_crypt_io *io)
 	if (io->ctx.req)
 		crypt_free_req(cc, io->ctx.req, base_bio);
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+    trace_block_crypt_dec_pending(base_bio);
+#endif
+
 	base_bio->bi_error = error;
 	bio_endio(base_bio);
 }
@@ -1393,6 +1404,10 @@ static void kcryptd_async_done(struct crypto_async_request *async_req,
 static void kcryptd_crypt(struct work_struct *work)
 {
 	struct dm_crypt_io *io = container_of(work, struct dm_crypt_io, work);
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+    trace_block_kcryptd_crypt(io->base_bio);
+#endif
 
 	if (bio_data_dir(io->base_bio) == READ)
 		kcryptd_crypt_read_convert(io);
@@ -1942,7 +1957,14 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	crypt_io_init(io, cc, bio, dm_target_offset(ti, bio->bi_iter.bi_sector));
 	io->ctx.req = (struct skcipher_request *)(io + 1);
 
-	if (bio_data_dir(io->base_bio) == READ) {
+#ifdef CONFIG_HISI_BLK
+	io->base_bio->hisi_bio.io_in_count |= HISI_IO_IN_COUNT_SKIP_ENDIO;
+#endif
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+    trace_block_crypt_map(bio, cc->start + io->sector);
+#endif
+    if (bio_data_dir(io->base_bio) == READ) {
 		if (kcryptd_io_read(io, GFP_NOWAIT))
 			kcryptd_queue_read(io);
 	} else

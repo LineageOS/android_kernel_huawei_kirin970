@@ -20,10 +20,20 @@
 #include <linux/sizes.h>
 #include <linux/limits.h>
 #include <linux/clk/clk-conf.h>
+#include <linux/arm-smccc.h>
 
 #include <asm/irq.h>
 
 #define to_amba_driver(d)	container_of(d, struct amba_driver, drv)
+
+#define HISI_SECURE_GPIO_READ_REG   0xc5010004
+static unsigned int amba_secure_readl(int offset)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_1_1_smc(HISI_SECURE_GPIO_READ_REG, offset, &res);//lint !e1514
+	return (u32)res.a1;
+}
 
 static const struct amba_id *
 amba_lookup(const struct amba_id *table, struct amba_device *dev)
@@ -69,11 +79,12 @@ static ssize_t driver_override_show(struct device *_dev,
 				    struct device_attribute *attr, char *buf)
 {
 	struct amba_device *dev = to_amba_device(_dev);
+	ssize_t len;
 
-	if (!dev->driver_override)
-		return 0;
-
-	return sprintf(buf, "%s\n", dev->driver_override);
+	device_lock(_dev);
+	len = sprintf(buf, "%s\n", dev->driver_override);
+	device_unlock(_dev);
+	return len;
 }
 
 static ssize_t driver_override_store(struct device *_dev,
@@ -81,7 +92,7 @@ static ssize_t driver_override_store(struct device *_dev,
 				     const char *buf, size_t count)
 {
 	struct amba_device *dev = to_amba_device(_dev);
-	char *driver_override, *old = dev->driver_override, *cp;
+	char *driver_override, *old, *cp;
 
 	/* We need to keep extra room for a newline */
 	if (count >= (PAGE_SIZE - 1))
@@ -95,12 +106,15 @@ static ssize_t driver_override_store(struct device *_dev,
 	if (cp)
 		*cp = '\0';
 
+	device_lock(_dev);
+	old = dev->driver_override;
 	if (strlen(driver_override)) {
 		dev->driver_override = driver_override;
 	} else {
 	       kfree(driver_override);
 	       dev->driver_override = NULL;
 	}
+	device_unlock(_dev);
 
 	kfree(old);
 
@@ -384,13 +398,24 @@ static int amba_device_try_add(struct amba_device *dev, struct resource *parent)
 		 * Read pid and cid based on size of resource
 		 * they are located at end of region
 		 */
-		for (pid = 0, i = 0; i < 4; i++)
-			pid |= (readl(tmp + size - 0x20 + 4 * i) & 255) <<
-				(i * 8);
-		for (cid = 0, i = 0; i < 4; i++)
-			cid |= (readl(tmp + size - 0x10 + 4 * i) & 255) <<
-				(i * 8);
-
+		for (pid = 0, i = 0; i < 4; i++) {
+			if (dev->secure_mode) {
+				pid |= (amba_secure_readl(size - 0x20 + 4 * i)& 255) <<
+					(i * 8);
+			} else {
+				pid |= (readl(tmp + size - 0x20 + 4 * i) & 255) <<
+					(i * 8);
+			}
+		}
+		for (cid = 0, i = 0; i < 4; i++) {
+			if (dev->secure_mode) {
+				cid |= (amba_secure_readl(size - 0x10 + 4 * i) & 255) <<
+					(i * 8);
+			} else {
+				cid |= (readl(tmp + size - 0x10 + 4 * i) & 255) <<
+					(i * 8);
+			}
+		}
 		amba_put_disable_pclk(dev);
 
 		if (cid == AMBA_CID || cid == CORESIGHT_CID)

@@ -112,7 +112,11 @@ static struct shash_alg algs[] = { {
 	.descsize		= sizeof(struct sha256_ce_state),
 	.digestsize		= SHA256_DIGEST_SIZE,
 	.base			= {
+#if defined(CONFIG_DM_HISI_SHA_USE_SOFT)
+		.cra_name		= "sha2ce",
+#else
 		.cra_name		= "sha256",
+#endif
 		.cra_driver_name	= "sha256-ce",
 		.cra_priority		= 200,
 		.cra_flags		= CRYPTO_ALG_TYPE_SHASH,

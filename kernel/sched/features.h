@@ -97,4 +97,8 @@ SCHED_FEAT(MIN_CAPACITY_CAPPING, false)
  * ON: If the target CPU saves any energy, use that.
  * OFF: Use whichever of target or backup saves most.
  */
+#ifdef CONFIG_DEFAULT_FBT_STRICT_ORDER
 SCHED_FEAT(FBT_STRICT_ORDER, true)
+#else
+SCHED_FEAT(FBT_STRICT_ORDER, false)
+#endif

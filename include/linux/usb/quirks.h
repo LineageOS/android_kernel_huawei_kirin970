@@ -59,4 +59,7 @@
 /* Device needs a pause after every control message. */
 #define USB_QUIRK_DELAY_CTRL_MSG		BIT(13)
 
+/* Do not reset resume during PM Resume */
+#define USB_QUIRK_PM_NO_RESET_RESUME		BIT(14)
+
 #endif /* __LINUX_USB_QUIRKS_H */

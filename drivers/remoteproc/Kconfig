@@ -9,6 +9,12 @@ config REMOTEPROC
 	select VIRTIO
 	select VIRTUALIZATION
 
+config HISI_REMOTEPROC
+	tristate "Histar remoteproc support"
+	depends on ARCH_HISI
+	select REMOTEPROC
+	select RPMSG_VIRTIO
+
 config OMAP_REMOTEPROC
 	tristate "OMAP remoteproc support"
 	depends on HAS_DMA

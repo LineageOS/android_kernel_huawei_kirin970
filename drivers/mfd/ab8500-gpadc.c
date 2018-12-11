@@ -655,73 +655,7 @@ static void ab8500_gpadc_read_calibration_data(struct ab8500_gpadc *gpadc)
 				__func__, otp_cal_regs[i]);
 	}
 
-	/*
-	 * The ADC calibration data is stored in OTP registers.
-	 * The layout of the calibration data is outlined below and a more
-	 * detailed description can be found in UM0836
-	 *
-	 * vm_h/l = vmain_high/low
-	 * bt_h/l = btemp_high/low
-	 * vb_h/l = vbat_high/low
-	 *
-	 * Data bits 8500/9540:
-	 * | 7	   | 6	   | 5	   | 4	   | 3	   | 2	   | 1	   | 0
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * |						   | vm_h9 | vm_h8
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * |		   | vm_h7 | vm_h6 | vm_h5 | vm_h4 | vm_h3 | vm_h2
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vm_h1 | vm_h0 | vm_l4 | vm_l3 | vm_l2 | vm_l1 | vm_l0 | bt_h9
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | bt_h8 | bt_h7 | bt_h6 | bt_h5 | bt_h4 | bt_h3 | bt_h2 | bt_h1
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | bt_h0 | bt_l4 | bt_l3 | bt_l2 | bt_l1 | bt_l0 | vb_h9 | vb_h8
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vb_h7 | vb_h6 | vb_h5 | vb_h4 | vb_h3 | vb_h2 | vb_h1 | vb_h0
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vb_l5 | vb_l4 | vb_l3 | vb_l2 | vb_l1 | vb_l0 |
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 *
-	 * Data bits 8540:
-	 * OTP2
-	 * | 7	   | 6	   | 5	   | 4	   | 3	   | 2	   | 1	   | 0
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * |
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vm_h9 | vm_h8 | vm_h7 | vm_h6 | vm_h5 | vm_h4 | vm_h3 | vm_h2
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vm_h1 | vm_h0 | vm_l4 | vm_l3 | vm_l2 | vm_l1 | vm_l0 | bt_h9
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | bt_h8 | bt_h7 | bt_h6 | bt_h5 | bt_h4 | bt_h3 | bt_h2 | bt_h1
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | bt_h0 | bt_l4 | bt_l3 | bt_l2 | bt_l1 | bt_l0 | vb_h9 | vb_h8
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vb_h7 | vb_h6 | vb_h5 | vb_h4 | vb_h3 | vb_h2 | vb_h1 | vb_h0
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | vb_l5 | vb_l4 | vb_l3 | vb_l2 | vb_l1 | vb_l0 |
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 *
-	 * Data bits 8540:
-	 * OTP4
-	 * | 7	   | 6	   | 5	   | 4	   | 3	   | 2	   | 1	   | 0
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * |					   | ib_h9 | ib_h8 | ib_h7
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | ib_h6 | ib_h5 | ib_h4 | ib_h3 | ib_h2 | ib_h1 | ib_h0 | ib_l5
-	 * |.......|.......|.......|.......|.......|.......|.......|.......
-	 * | ib_l4 | ib_l3 | ib_l2 | ib_l1 | ib_l0 |
-	 *
-	 *
-	 * Ideal output ADC codes corresponding to injected input voltages
-	 * during manufacturing is:
-	 *
-	 * vmain_high: Vin = 19500mV / ADC ideal code = 997
-	 * vmain_low:  Vin = 315mV   / ADC ideal code = 16
-	 * btemp_high: Vin = 1300mV  / ADC ideal code = 985
-	 * btemp_low:  Vin = 21mV    / ADC ideal code = 16
-	 * vbat_high:  Vin = 4700mV  / ADC ideal code = 982
-	 * vbat_low:   Vin = 2380mV  / ADC ideal code = 33
-	 */
+	
 
 	if (is_ab8540(ab8500)) {
 		/* Calculate gain and offset for VMAIN if all reads succeeded*/

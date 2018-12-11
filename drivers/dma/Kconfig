@@ -529,6 +529,25 @@ config XGENE_DMA
 	select ASYNC_TX_ENABLE_CHANNEL_SWITCH
 	help
 	  Enable support for the APM X-Gene SoC DMA engine.
+config HISI_DMA
+	tristate "Hisilicon Kirin DMA support"
+	depends on ARCH_HISI
+	select DMA_ENGINE
+	select DMA_VIRTUAL_CHANNELS
+	help
+	  Support the DMA engine for Hisilicon Kirin platform
+	  devices.
+
+config HISI_DMA_NO_CCI
+	bool "Hisilicon Kirin DMA CCI support"
+	depends on (HISI_DMA)
+	help
+	  Hisilicon Kirin DMA CCI switch
+config HISI_DMA_PM_RUNTIME
+	bool "Hisilicon hisi DMA pm runtime support"
+	depends on (HISI_DMA && PM_RUNTIME)
+	help
+	  Hisilicon hisi DMA pm runtime switch.
 
 config XILINX_DMA
 	tristate "Xilinx AXI DMAS Engine"

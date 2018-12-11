@@ -136,6 +136,21 @@ static inline int current_has_network(void)
 }
 #endif
 
+#ifdef CONFIG_HW_QTAGUID_PID
+#include <huawei_platform/net/qtaguid_pid/qtaguid_pid.h>
+#endif
+
+#ifdef CONFIG_HW_HIDATA_HIMOS
+#include <huawei_platform/net/himos/hw_himos_tcp_stats.h>
+#endif
+#ifdef CONFIG_HW_DPIMARK_MODULE
+#include <huawei_platform/net/hw_dpi_mark/dpi_hw_hook.h>
+#endif
+
+
+int sysctl_local_reserved_ports_bind_ctrl __read_mostly = 0;
+int sysctl_local_reserved_ports_bind_pid  __read_mostly = 0;
+
 /* The inetsw table contains everything that inet_create needs to
  * build a new socket.
  */
@@ -349,6 +364,9 @@ lookup_protocol:
 		if (IPPROTO_RAW == protocol)
 			inet->hdrincl = 1;
 	}
+#if defined(CONFIG_HUAWEI_BASTET) || defined(CONFIG_HUAWEI_XENGINE)
+	sk->acc_state	= 0;
+#endif
 
 	if (net->ipv4.sysctl_ip_no_pmtu_disc)
 		inet->pmtudisc = IP_PMTUDISC_DONT;
@@ -362,7 +380,12 @@ lookup_protocol:
 	sk->sk_destruct	   = inet_sock_destruct;
 	sk->sk_protocol	   = protocol;
 	sk->sk_backlog_rcv = sk->sk_prot->backlog_rcv;
-
+#if defined(CONFIG_HUAWEI_BASTET) || defined(CONFIG_HUAWEI_XENGINE)
+	sk->acc_state   = 0;
+#endif
+#if defined(CONFIG_HUAWEI_BASTET)
+	sk->discard_duration   = 0;
+#endif
 	inet->uc_ttl	= -1;
 	inet->mc_loop	= 1;
 	inet->mc_ttl	= 1;
@@ -394,6 +417,14 @@ lookup_protocol:
 			sk_common_release(sk);
 	}
 out:
+#ifdef CONFIG_HW_QTAGUID_PID
+	if(!err)
+		qtaguid_pid_put(sk);
+#endif
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	if (!err)
+		mplk_try_nw_bind_for_udp(sk);
+#endif
 	return err;
 out_rcu_unlock:
 	rcu_read_unlock();
@@ -412,6 +443,10 @@ int inet_release(struct socket *sock)
 
 	if (sk) {
 		long timeout;
+
+#ifdef CONFIG_HUAWEI_BASTET
+		bastet_inet_release(sk);
+#endif
 
 #ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
 		qtaguid_untag(sock, true);
@@ -759,6 +794,9 @@ EXPORT_SYMBOL(inet_getname);
 int inet_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	int err;
+#endif
 
 	sock_rps_record_flow(sk);
 
@@ -766,7 +804,17 @@ int inet_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 	if (!inet_sk(sk)->inet_num && !sk->sk_prot->no_autobind &&
 	    inet_autobind(sk))
 		return -EAGAIN;
-
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	if (sk->sk_protocol == IPPROTO_UDP || sk->sk_protocol == IPPROTO_UDPLITE) {
+		err = mplk_sendmsg(sk);
+		if (err < 0)
+			return err;
+	}
+#endif
+#ifdef CONFIG_HW_HIDATA_HIMOS
+	if (sk->sk_protocol == IPPROTO_TCP)
+		himos_tcp_stats(sk, NULL, msg, 0, 1);
+#endif
 	return sk->sk_prot->sendmsg(sk, msg, size);
 }
 EXPORT_SYMBOL(inet_sendmsg);
@@ -795,6 +843,15 @@ int inet_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	struct sock *sk = sock->sk;
 	int addr_len = 0;
 	int err;
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	int ret;
+#endif
+#ifdef CONFIG_HW_HIDATA_HIMOS
+	struct msghdr msg_backup;
+
+	if (msg)
+		msg_backup = *msg;
+#endif
 
 	sock_rps_record_flow(sk);
 
@@ -802,6 +859,20 @@ int inet_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 				   flags & ~MSG_DONTWAIT, &addr_len);
 	if (err >= 0)
 		msg->msg_namelen = addr_len;
+
+#ifdef CONFIG_HW_HIDATA_HIMOS
+	if (err > 0 && sk->sk_protocol == IPPROTO_TCP) {
+		himos_tcp_stats(sk, &msg_backup, msg, err, 0);
+	}
+#endif
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	if (sk->sk_protocol == IPPROTO_UDP || sk->sk_protocol == IPPROTO_UDPLITE) {
+		ret = mplk_recvmsg(sk);
+		if (ret < 0)
+			return ret;
+	}
+#endif
+
 	return err;
 }
 EXPORT_SYMBOL(inet_recvmsg);
@@ -1638,6 +1709,11 @@ static __net_init int ipv4_mib_init_net(struct net *net)
 	net->mib.tcp_statistics = alloc_percpu(struct tcp_mib);
 	if (!net->mib.tcp_statistics)
 		goto err_tcp_mib;
+#ifdef CONFIG_HW_WIFIPRO
+	net->mib.wifipro_tcp_statistics = alloc_percpu(struct wifipro_tcp_mib);
+	if (!net->mib.wifipro_tcp_statistics)
+		goto err_wifipro_tcp_mib;
+#endif
 	net->mib.ip_statistics = alloc_percpu(struct ipstats_mib);
 	if (!net->mib.ip_statistics)
 		goto err_ip_mib;
@@ -1680,6 +1756,10 @@ err_net_mib:
 	free_percpu(net->mib.ip_statistics);
 err_ip_mib:
 	free_percpu(net->mib.tcp_statistics);
+#ifdef CONFIG_HW_WIFIPRO
+err_wifipro_tcp_mib:
+    free_percpu(net->mib.wifipro_tcp_statistics);
+#endif
 err_tcp_mib:
 	return -ENOMEM;
 }
@@ -1692,6 +1772,9 @@ static __net_exit void ipv4_mib_exit_net(struct net *net)
 	free_percpu(net->mib.udp_statistics);
 	free_percpu(net->mib.net_statistics);
 	free_percpu(net->mib.ip_statistics);
+#ifdef CONFIG_HW_WIFIPRO
+    free_percpu(net->mib.wifipro_tcp_statistics);
+#endif
 	free_percpu(net->mib.tcp_statistics);
 }
 

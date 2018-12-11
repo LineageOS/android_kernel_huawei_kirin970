@@ -16,6 +16,10 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
+#ifdef CONFIG_HUAWEI_SLEEPLOG
+#include <linux/proc_fs.h>
+#endif
+
 #include "power.h"
 
 DEFINE_MUTEX(pm_mutex);
@@ -241,6 +245,18 @@ late_initcall(pm_debugfs_init);
 #endif /* CONFIG_DEBUG_FS */
 
 #endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_HUAWEI_SLEEPLOG
+static int __init pm_proc_init(void)
+{
+	proc_create("suspend_stats", S_IRUGO,
+			(struct proc_dir_entry *)NULL, &suspend_stats_operations);
+	return 0;
+}
+/*lint -e528 -esym(750,*)*/
+late_initcall(pm_proc_init);
+/*lint -e528 +esym(750,*)*/
+#endif
 
 #ifdef CONFIG_PM_SLEEP_DEBUG
 /*

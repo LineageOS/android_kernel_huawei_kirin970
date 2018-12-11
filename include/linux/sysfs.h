@@ -155,6 +155,8 @@ static const struct attribute_group _name##_group = {		\
 };								\
 __ATTRIBUTE_GROUPS(_name)
 
+#define attr_name(_attr) (_attr).attr.name
+
 struct file;
 struct vm_area_struct;
 
@@ -518,7 +520,7 @@ static inline void sysfs_notify_dirent(struct kernfs_node *kn)
 }
 
 static inline struct kernfs_node *sysfs_get_dirent(struct kernfs_node *parent,
-						   const unsigned char *name)
+						   const char *name)
 {
 	return kernfs_find_and_get(parent, name);
 }

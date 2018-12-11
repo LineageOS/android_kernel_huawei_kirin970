@@ -958,6 +958,13 @@ config HID_SENSOR_CUSTOM_SENSOR
 	  standard sensors.
 	  Select this config option for custom/generic sensor support.
 
+config HID_VR
+	tristate "VR device support"
+	depends on USB_HID
+	---help---
+	Support for VR devices.
+	Say Y here if you have a VR device.
+
 config HID_ALPS
 	tristate "Alps HID device support"
 	depends on HID
@@ -965,6 +972,12 @@ config HID_ALPS
 	Support for Alps I2C HID touchpads and StickPointer.
 	Say Y here if you have a Alps touchpads over i2c-hid or usbhid
 	and want support for its special functionalities.
+
+config HID_HUAWEI
+	tristate "HUAWEI TypeC Headset"
+	depends on HID
+	---help---
+	Support for Huawei TypeC headset.
 
 endmenu
 

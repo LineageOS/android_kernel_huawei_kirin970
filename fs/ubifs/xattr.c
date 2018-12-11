@@ -270,8 +270,7 @@ static struct inode *iget_xattr(struct ubifs_info *c, ino_t inum)
 }
 
 static int __ubifs_setxattr(struct inode *host, const char *name,
-			    const void *value, size_t size, int flags,
-			    bool check_lock)
+			    const void *value, size_t size, int flags)
 {
 	struct inode *inode;
 	struct ubifs_info *c = host->i_sb->s_fs_info;
@@ -280,8 +279,7 @@ static int __ubifs_setxattr(struct inode *host, const char *name,
 	union ubifs_key key;
 	int err;
 
-	if (check_lock)
-		ubifs_assert(inode_is_locked(host));
+	ubifs_assert(inode_is_locked(host));
 
 	if (size > UBIFS_MAX_INO_DATA)
 		return -ERANGE;
@@ -550,8 +548,7 @@ static int init_xattrs(struct inode *inode, const struct xattr *xattr_array,
 		}
 		strcpy(name, XATTR_SECURITY_PREFIX);
 		strcpy(name + XATTR_SECURITY_PREFIX_LEN, xattr->name);
-		err = __ubifs_setxattr(inode, name, xattr->value,
-				       xattr->value_len, 0, false);
+		err = __ubifs_setxattr(inode, name, xattr->value, xattr->value_len, 0);
 		kfree(name);
 		if (err < 0)
 			break;
@@ -597,8 +594,7 @@ static int ubifs_xattr_set(const struct xattr_handler *handler,
 	name = xattr_full_name(handler, name);
 
 	if (value)
-		return __ubifs_setxattr(inode, name, value, size, flags,
-					true);
+		return __ubifs_setxattr(inode, name, value, size, flags);
 	else
 		return __ubifs_removexattr(inode, name);
 }

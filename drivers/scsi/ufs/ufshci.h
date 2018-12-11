@@ -48,6 +48,7 @@ enum {
 	REG_UFS_VERSION				= 0x08,
 	REG_CONTROLLER_DEV_ID			= 0x10,
 	REG_CONTROLLER_PROD_ID			= 0x14,
+	REG_CONTROLLER_AHIT			= 0x18,
 	REG_INTERRUPT_STATUS			= 0x20,
 	REG_INTERRUPT_ENABLE			= 0x24,
 	REG_CONTROLLER_STATUS			= 0x30,
@@ -72,6 +73,7 @@ enum {
 	REG_UIC_COMMAND_ARG_1			= 0x94,
 	REG_UIC_COMMAND_ARG_2			= 0x98,
 	REG_UIC_COMMAND_ARG_3			= 0x9C,
+	REG_SPACE_SIZE				= 0xA0,
 };
 
 /* Controller capability masks */
@@ -81,6 +83,7 @@ enum {
 	MASK_64_ADDRESSING_SUPPORT		= 0x01000000,
 	MASK_OUT_OF_ORDER_DATA_DELIVERY_SUPPORT	= 0x02000000,
 	MASK_UIC_DME_TEST_MODE_SUPPORT		= 0x04000000,
+	MASK_INLINE_ENCRYPTO_SUPPORT		= 0x10000000,
 };
 
 /* UFS Version 08h */
@@ -88,11 +91,10 @@ enum {
 #define MAJOR_VERSION_NUM_MASK		UFS_MASK(0xFFFF, 16)
 
 /* Controller UFSHCI version */
-enum {
-	UFSHCI_VERSION_10 = 0x00010000, /* 1.0 */
-	UFSHCI_VERSION_11 = 0x00010100, /* 1.1 */
-	UFSHCI_VERSION_20 = 0x00000200, /* 2.0 */
-	UFSHCI_VERSION_21 = 0x00000210, /* 2.1 */
+enum { UFSHCI_VERSION_10 = 0x00010000, /* 1.0 */
+       UFSHCI_VERSION_11 = 0x00010100, /* 1.1 */
+       UFSHCI_VERSION_20 = 0x00020000, /* 2.0 */
+       UFSHCI_VERSION_21 = 0x00000210, /* 2.1 */
 };
 
 /*
@@ -123,8 +125,10 @@ enum {
 #define UTP_TASK_REQ_COMPL			UFS_BIT(9)
 #define UIC_COMMAND_COMPL			UFS_BIT(10)
 #define DEVICE_FATAL_ERROR			UFS_BIT(11)
+#define UTP_ERROR			 	UFS_BIT(12)
 #define CONTROLLER_FATAL_ERROR			UFS_BIT(16)
 #define SYSTEM_BUS_FATAL_ERROR			UFS_BIT(17)
+#define CRYPTO_ENGINE_FATAL_ERROR		UFS_BIT(18)
 
 #define UFSHCD_UIC_PWR_MASK	(UIC_HIBERNATE_ENTER |\
 				UIC_HIBERNATE_EXIT |\
@@ -135,11 +139,16 @@ enum {
 #define UFSHCD_ERROR_MASK	(UIC_ERROR |\
 				DEVICE_FATAL_ERROR |\
 				CONTROLLER_FATAL_ERROR |\
-				SYSTEM_BUS_FATAL_ERROR)
+				SYSTEM_BUS_FATAL_ERROR|\
+				UIC_LINK_LOST)
 
 #define INT_FATAL_ERRORS	(DEVICE_FATAL_ERROR |\
 				CONTROLLER_FATAL_ERROR |\
-				SYSTEM_BUS_FATAL_ERROR)
+				CRYPTO_ENGINE_FATAL_ERROR |\
+				SYSTEM_BUS_FATAL_ERROR|\
+				UIC_LINK_LOST)
+
+#define UFS_AHIT_AH8ITV_MASK			(0x3FF)
 
 /* HCS - Host Controller Status 30h */
 #define DEVICE_PRESENT				UFS_BIT(0)
@@ -162,10 +171,12 @@ enum {
 /* HCE - Host Controller Enable 34h */
 #define CONTROLLER_ENABLE	UFS_BIT(0)
 #define CONTROLLER_DISABLE	0x0
+#define CRYPTO_GENERAL_ENABLE	UFS_BIT(1)
 
 /* UECPA - Host UIC Error Code PHY Adapter Layer 38h */
 #define UIC_PHY_ADAPTER_LAYER_ERROR			UFS_BIT(31)
 #define UIC_PHY_ADAPTER_LAYER_ERROR_CODE_MASK		0x1F
+#define UIC_PHY_ADAPTER_LAYER_ERROR_LINE_RESET		UFS_BIT(4)
 
 /* UECDL - Host UIC Error Code Data Link Layer 3Ch */
 #define UIC_DATA_LINK_LAYER_ERROR		UFS_BIT(31)
@@ -264,6 +275,9 @@ enum {
 #define INT_AGGR_COUNTER_THLD_VAL(c)	(((c) & 0x1F) << 8)
 #define INT_AGGR_TIMEOUT_VAL(t)		(((t) & 0xFF) << 0)
 
+#define AUTO_HIBERN8_TIMER_SCALE_VAL(t)	(((t) & 0x7) << 10)
+#define AUTO_HIBERN8_IDLE_TIMER_VAL(t)	(((t) & 0x3FF) << 0)
+
 /* Interrupt disable masks */
 enum {
 	/* Interrupt disable mask for UFSHCI v1.0 */
@@ -272,6 +286,9 @@ enum {
 
 	/* Interrupt disable mask for UFSHCI v1.1 */
 	INTERRUPT_MASK_ALL_VER_11	= 0x31FFF,
+
+	/* Interrupt disable mask for UFSHCI v2.1 */
+	INTERRUPT_MASK_ALL_VER_21	= 0x71FFF,
 };
 
 /*
@@ -295,6 +312,7 @@ enum {
 	UTP_NATIVE_UFS_COMMAND		= 0x10000000,
 	UTP_DEVICE_MANAGEMENT_FUNCTION	= 0x20000000,
 	UTP_REQ_DESC_INT_CMD		= 0x01000000,
+	UTP_REQ_DESC_CRYPTO_ENABLE	= 0x00800000,
 };
 
 /* UTP Transfer Request Data Direction (DD) */
@@ -314,6 +332,7 @@ enum {
 	OCS_PEER_COMM_FAILURE		= 0x5,
 	OCS_ABORTED			= 0x6,
 	OCS_FATAL_ERROR			= 0x7,
+	OCS_GENERAL_CRYPTO_ERROR	= 0x0A,
 	OCS_INVALID_COMMAND_STATUS	= 0x0F,
 	MASK_OCS			= 0x0F,
 };
@@ -337,6 +356,16 @@ struct ufshcd_sg_entry {
 	__le32    size;
 };
 
+#ifdef CONFIG_SCSI_UFS_CUST_MAX_SECTORS
+#define UFS_SG_MAX_COUNT        256
+#endif
+
+#ifdef CONFIG_SCSI_UFS_HI1861_VCMD
+#define MAX_DATA_USED_SPACE (124 + 1) /* 1861 REMAP 62K*/
+#else
+#define MAX_DATA_USED_SPACE (8 + 1) /* 1861 FSR 4K*/
+#endif
+
 /**
  * struct utp_transfer_cmd_desc - UFS Command Descriptor structure
  * @command_upiu: Command UPIU Frame address
@@ -345,8 +374,16 @@ struct ufshcd_sg_entry {
  */
 struct utp_transfer_cmd_desc {
 	u8 command_upiu[ALIGNED_UPIU_SIZE];
+#ifdef CONFIG_SCSI_UFS_HI1861_VCMD
+	u8 response_upiu[ALIGNED_UPIU_SIZE * MAX_DATA_USED_SPACE];
+#else
 	u8 response_upiu[ALIGNED_UPIU_SIZE];
+#endif
+#ifdef CONFIG_SCSI_UFS_CUST_MAX_SECTORS
+	struct ufshcd_sg_entry    prd_table[UFS_SG_MAX_COUNT];
+#else
 	struct ufshcd_sg_entry    prd_table[SG_ALL];
+#endif
 };
 
 /**

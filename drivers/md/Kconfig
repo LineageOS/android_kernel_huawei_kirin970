@@ -486,6 +486,14 @@ config DM_VERITY_FEC
 
 	  If unsure, say N.
 
+config DM_VERITY_HW_RETRY
+	bool "Verity retry mechanism support"
+	depends on DM_VERITY
+	---help---
+	  Add verify retry support to dm-verity.
+
+	  If unsure, say N.
+
 config DM_SWITCH
 	tristate "Switch target support (EXPERIMENTAL)"
 	depends on BLK_DEV_DM
@@ -516,6 +524,17 @@ config DM_LOG_WRITES
 
 	  If unsure, say N.
 
+config DM_VERITY_AVB
+	tristate "Support AVB specific verity error behavior"
+	depends on DM_VERITY
+	---help---
+	  Enables Android Verified Boot platform-specific error
+	  behavior. In particular, it will modify the vbmeta partition
+	  specified on the kernel command-line when non-transient error
+	  occurs (followed by a panic).
+
+	  If unsure, say N.
+
 config DM_ANDROID_VERITY
 	bool "Android verity target support"
 	depends on DM_VERITY=y
@@ -534,4 +553,24 @@ config DM_ANDROID_VERITY
 	  of the metadata contents are verified against the key included
 	  in the system keyring. Upon success, the underlying verity
 	  target is setup.
+
+config DM_HISI_SHA_USE_SOFT
+	bool "use soft hash"
+	---help---
+	  use soft hash
+
+config OEM_DEFINE_VERITY_FEC
+	bool "reread data after verify fail"
+	depends on DM_VERITY
+	default y
+	---help---
+	 add reread data support to dm-verity
+
+config DM_HUAWEI_USE_OPT_PARAMETER
+        bool "use huawei optimized parameter"
+        depends on DM_VERITY
+        default n
+        ---help---
+         use huawei optimized parameter
+
 endif # MD

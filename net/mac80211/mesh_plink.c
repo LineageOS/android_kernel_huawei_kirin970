@@ -93,23 +93,19 @@ static inline void mesh_plink_fsm_restart(struct sta_info *sta)
 static u32 mesh_set_short_slot_time(struct ieee80211_sub_if_data *sdata)
 {
 	struct ieee80211_local *local = sdata->local;
-	struct ieee80211_supported_band *sband;
+	enum nl80211_band band = ieee80211_get_sdata_band(sdata);
+	struct ieee80211_supported_band *sband = local->hw.wiphy->bands[band];
 	struct sta_info *sta;
 	u32 erp_rates = 0, changed = 0;
 	int i;
 	bool short_slot = false;
 
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return changed;
-
-	if (sband->band == NL80211_BAND_5GHZ) {
+	if (band == NL80211_BAND_5GHZ) {
 		/* (IEEE 802.11-2012 19.4.5) */
 		short_slot = true;
 		goto out;
-	} else if (sband->band != NL80211_BAND_2GHZ) {
+	} else if (band != NL80211_BAND_2GHZ)
 		goto out;
-	}
 
 	for (i = 0; i < sband->n_bitrates; i++)
 		if (sband->bitrates[i].flags & IEEE80211_RATE_ERP_G)
@@ -125,7 +121,7 @@ static u32 mesh_set_short_slot_time(struct ieee80211_sub_if_data *sdata)
 			continue;
 
 		short_slot = false;
-		if (erp_rates & sta->sta.supp_rates[sband->band])
+		if (erp_rates & sta->sta.supp_rates[band])
 			short_slot = true;
 		 else
 			break;
@@ -251,15 +247,7 @@ static int mesh_plink_frame_tx(struct ieee80211_sub_if_data *sdata,
 	mgmt->u.action.u.self_prot.action_code = action;
 
 	if (action != WLAN_SP_MESH_PEERING_CLOSE) {
-		struct ieee80211_supported_band *sband;
-		enum nl80211_band band;
-
-		sband = ieee80211_get_sband(sdata);
-		if (!sband) {
-			err = -EINVAL;
-			goto free;
-		}
-		band = sband->band;
+		enum nl80211_band band = ieee80211_get_sdata_band(sdata);
 
 		/* capability info */
 		pos = skb_put(skb, 2);
@@ -405,16 +393,13 @@ static void mesh_sta_info_init(struct ieee80211_sub_if_data *sdata,
 			       struct ieee802_11_elems *elems, bool insert)
 {
 	struct ieee80211_local *local = sdata->local;
+	enum nl80211_band band = ieee80211_get_sdata_band(sdata);
 	struct ieee80211_supported_band *sband;
 	u32 rates, basic_rates = 0, changed = 0;
 	enum ieee80211_sta_rx_bandwidth bw = sta->sta.bandwidth;
 
-	sband = ieee80211_get_sband(sdata);
-	if (!sband)
-		return;
-
-	rates = ieee80211_sta_get_rates(sdata, elems, sband->band,
-					&basic_rates);
+	sband = local->hw.wiphy->bands[band];
+	rates = ieee80211_sta_get_rates(sdata, elems, band, &basic_rates);
 
 	spin_lock_bh(&sta->mesh->plink_lock);
 	sta->rx_stats.last_rx = jiffies;
@@ -425,9 +410,9 @@ static void mesh_sta_info_init(struct ieee80211_sub_if_data *sdata,
 		goto out;
 	sta->mesh->processed_beacon = true;
 
-	if (sta->sta.supp_rates[sband->band] != rates)
+	if (sta->sta.supp_rates[band] != rates)
 		changed |= IEEE80211_RC_SUPP_RATES_CHANGED;
-	sta->sta.supp_rates[sband->band] = rates;
+	sta->sta.supp_rates[band] = rates;
 
 	if (ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband,
 					      elems->ht_cap_elem, sta))

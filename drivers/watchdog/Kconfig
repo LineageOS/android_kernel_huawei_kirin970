@@ -214,6 +214,23 @@ config ARM_SP805_WATCHDOG
 	help
 	  ARM Primecell SP805 Watchdog timer. This will reboot your system when
 	  the timeout is reached.
+#
+# Hisilicon Watchdog
+#
+
+config HISI_SR_AP_WATCHDOG
+	tristate "suspend and resume to be monitored by the watchdog"
+	depends on HISI_SP805_WATCHDOG
+	help
+	  In the case of hung during the suspend and resume process,
+	  it needs to be monitored by the watchdog.
+
+config HISI_SP805_WATCHDOG
+	tristate "HISILICON SP805 Watchdog"
+	depends on (ARM || ARM64) && ARM_AMBA
+	select WATCHDOG_CORE
+	help
+	  Hisilicon SP805 Watchdog Based on ARM SP805 Watchdog.
 
 config ARM_SBSA_WATCHDOG
 	tristate "ARM SBSA Generic Watchdog"
@@ -799,12 +816,11 @@ config EBC_C384_WDT
 	  the timeout module parameter.
 
 config F71808E_WDT
-	tristate "Fintek F718xx, F818xx Super I/O Watchdog"
+	tristate "Fintek F71808E, F71862FG, F71869, F71882FG and F71889FG Watchdog"
 	depends on X86
 	help
-	  This is the driver for the hardware watchdog on the Fintek F71808E,
-	  F71862FG, F71868, F71869, F71882FG, F71889FG, F81865 and F81866
-	  Super I/O controllers.
+	  This is the driver for the hardware watchdog on the Fintek
+	  F71808E, F71862FG, F71869, F71882FG and F71889FG Super I/O controllers.
 
 	  You can compile this driver directly into the kernel, or use
 	  it as a module.  The module will be called f71808e_wdt.

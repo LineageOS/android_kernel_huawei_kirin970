@@ -292,3 +292,14 @@ config UCSI
 
 	  To compile the driver as a module, choose M here: the module will be
 	  called ucsi.
+
+config USB_DFU
+	tristate "Common driver for DFU(device firmware update)"
+	help
+	  Say Y here if you want to update device firmware via DFU procotol.
+
+config USB_SOURCESINK
+	tristate "Client driver for sourcesink device"
+	depends on HISI_DEBUG_FS
+	help
+	  Say Y here if you want to connect f_sourcesink device.

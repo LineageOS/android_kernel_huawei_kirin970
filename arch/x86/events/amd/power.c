@@ -277,7 +277,7 @@ static int __init amd_power_pmu_init(void)
 	int ret;
 
 	if (!x86_match_cpu(cpu_match))
-		return -ENODEV;
+		return 0;
 
 	if (!boot_cpu_has(X86_FEATURE_ACC_POWER))
 		return -ENODEV;

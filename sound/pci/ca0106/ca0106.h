@@ -399,7 +399,7 @@
 						/* Similar to register 0x65, except that the destination is the I2S mixer instead of the SPDIF mixer. I.E. Outputs to the Analog outputs instead of SPDIF. */
 #define PLAYBACK_VOLUME2        0x6a            /* Playback Analog volume per channel. Does not effect AC3 output */
 						/* Similar to register 0x66, except that the destination is the I2S mixer instead of the SPDIF mixer. I.E. Outputs to the Analog outputs instead of SPDIF. */
-#define UNKNOWN6b               0x6b            /* Unknown. Readonly. Default 00400000 00400000 00400000 00400000 */
+#define UNKNOWN6b               0x6b
 #define MIDI_UART_A_DATA		0x6c            /* Midi Uart A Data */
 #define MIDI_UART_A_CMD		0x6d            /* Midi Uart A Command/Status */
 #define MIDI_UART_B_DATA		0x6e            /* Midi Uart B Data (currently unused) */
@@ -418,7 +418,7 @@
 #define CA0106_MPU401_ENTER_UART	0x3f
 #define CA0106_MPU401_ACK		0xfe
 
-#define SAMPLE_RATE_TRACKER_STATUS 0x70         /* Readonly. Default 00108000 00108000 00500000 00500000 */
+#define SAMPLE_RATE_TRACKER_STATUS 0x70
 						/* Estimated sample rate [19:0] Relative to 48kHz. 0x8000 =  1.0
 						 * Rate Locked [20]
 						 * SPDIF Locked [21] For SPDIF channel only.
@@ -469,7 +469,7 @@
 						 * SPDIF output enable [27:24]
 						 */ 
 #define UNKNOWN73               0x73            /* Unknown. Readonly. Default 0x0 */
-#define CHIP_VERSION            0x74            /* P17 Chip version. Channel_id 0 only. Default 00000071 */
+#define CHIP_VERSION            0x74
 #define EXTENDED_INT_MASK       0x75            /* Used by both playback and capture interrupt handler */
 						/* Sets which Interrupts are enabled. */
 						/* 0x00000001 = Half period. Playback.

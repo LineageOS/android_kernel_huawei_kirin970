@@ -43,7 +43,7 @@ int cachefiles_check_object_type(struct cachefiles_object *object)
 	_enter("%p{%s}", object, type);
 
 	/* attempt to install a type label directly */
-	ret = vfs_setxattr(dentry, cachefiles_xattr_cache, type, 2,
+	ret = vfs_setxattr(NULL, dentry, cachefiles_xattr_cache, type, 2,
 			   XATTR_CREATE);
 	if (ret == 0) {
 		_debug("SET"); /* we succeeded */
@@ -58,7 +58,7 @@ int cachefiles_check_object_type(struct cachefiles_object *object)
 	}
 
 	/* read the current type label */
-	ret = vfs_getxattr(dentry, cachefiles_xattr_cache, xtype, 3);
+	ret = vfs_getxattr(NULL, dentry, cachefiles_xattr_cache, xtype, 3);
 	if (ret < 0) {
 		if (ret == -ERANGE)
 			goto bad_type_length;
@@ -113,7 +113,7 @@ int cachefiles_set_object_xattr(struct cachefiles_object *object,
 	/* attempt to install the cache metadata directly */
 	_debug("SET #%u", auxdata->len);
 
-	ret = vfs_setxattr(dentry, cachefiles_xattr_cache,
+	ret = vfs_setxattr(NULL, dentry, cachefiles_xattr_cache,
 			   &auxdata->type, auxdata->len,
 			   XATTR_CREATE);
 	if (ret < 0 && ret != -ENOMEM)
@@ -141,7 +141,7 @@ int cachefiles_update_object_xattr(struct cachefiles_object *object,
 	/* attempt to install the cache metadata directly */
 	_debug("SET #%u", auxdata->len);
 
-	ret = vfs_setxattr(dentry, cachefiles_xattr_cache,
+	ret = vfs_setxattr(NULL, dentry, cachefiles_xattr_cache,
 			   &auxdata->type, auxdata->len,
 			   XATTR_REPLACE);
 	if (ret < 0 && ret != -ENOMEM)
@@ -172,7 +172,7 @@ int cachefiles_check_auxdata(struct cachefiles_object *object)
 	if (!auxbuf)
 		return -ENOMEM;
 
-	xlen = vfs_getxattr(dentry, cachefiles_xattr_cache,
+	xlen = vfs_getxattr(NULL, dentry, cachefiles_xattr_cache,
 			    &auxbuf->type, 512 + 1);
 	ret = -ESTALE;
 	if (xlen < 1 ||
@@ -213,7 +213,7 @@ int cachefiles_check_object_xattr(struct cachefiles_object *object,
 	}
 
 	/* read the current type label */
-	ret = vfs_getxattr(dentry, cachefiles_xattr_cache,
+	ret = vfs_getxattr(NULL, dentry, cachefiles_xattr_cache,
 			   &auxbuf->type, 512 + 1);
 	if (ret < 0) {
 		if (ret == -ENODATA)
@@ -269,7 +269,7 @@ int cachefiles_check_object_xattr(struct cachefiles_object *object,
 		}
 
 		/* update the current label */
-		ret = vfs_setxattr(dentry, cachefiles_xattr_cache,
+		ret = vfs_setxattr(NULL, dentry, cachefiles_xattr_cache,
 				   &auxdata->type, auxdata->len,
 				   XATTR_REPLACE);
 		if (ret < 0) {
@@ -308,7 +308,7 @@ int cachefiles_remove_object_xattr(struct cachefiles_cache *cache,
 {
 	int ret;
 
-	ret = vfs_removexattr(dentry, cachefiles_xattr_cache);
+	ret = vfs_removexattr(NULL, dentry, cachefiles_xattr_cache);
 	if (ret < 0) {
 		if (ret == -ENOENT || ret == -ENODATA)
 			ret = 0;

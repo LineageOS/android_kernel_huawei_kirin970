@@ -21,6 +21,6 @@ struct kern_ipc_perm
 	umode_t		mode; 
 	unsigned long	seq;
 	void		*security;
-};
+}__randomize_layout;
 
 #endif /* _LINUX_IPC_H */

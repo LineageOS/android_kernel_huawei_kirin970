@@ -1,6 +1,9 @@
 #ifndef INT_BLK_MQ_H
 #define INT_BLK_MQ_H
 
+#include "blk-stat.h"
+#include "hisi-blk.h"
+
 struct blk_mq_tag_set;
 
 struct blk_mq_ctx {
@@ -18,6 +21,9 @@ struct blk_mq_ctx {
 
 	/* incremented at completion time */
 	unsigned long		____cacheline_aligned_in_smp rq_completed[2];
+#ifdef CONFIG_WBT
+	struct blk_rq_stat	stat[4];
+#endif
 
 	struct request_queue	*queue;
 	struct kobject		kobj;
@@ -78,12 +84,31 @@ static inline struct blk_mq_ctx *blk_mq_get_ctx(struct request_queue *q)
 
 static inline void blk_mq_put_ctx(struct blk_mq_ctx *ctx)
 {
+#ifdef CONFIG_HISI_BLK
+	int ret = -EPERM;
+	if (ctx->queue->hisi_queue_ops && ctx->queue->hisi_queue_ops->mq_ctx_put_fn)
+		ret = ctx->queue->hisi_queue_ops->mq_ctx_put_fn(ctx);
+	if (ret) {
+		if (likely(ret == -EPERM)) {
+			put_cpu();
+		} else {
+			pr_err("%s: mq_ctx_put_fn failed. err = %d \r\n", __func__, ret);
+		#if defined(CONFIG_HISI_DEBUG_FS) || defined(CONFIG_HISI_BLK_DEBUG)
+			BUG();
+		#endif
+		}
+	}
+#else
 	put_cpu();
+#endif
 }
 
 struct blk_mq_alloc_data {
 	/* input parameter */
 	struct request_queue *q;
+#ifdef CONFIG_HISI_BLK
+	unsigned long io_flag;
+#endif
 	unsigned int flags;
 
 	/* input & output parameter */
@@ -106,4 +131,7 @@ static inline bool blk_mq_hw_queue_mapped(struct blk_mq_hw_ctx *hctx)
 	return hctx->nr_ctx && hctx->tags;
 }
 
+#ifdef CONFIG_WBT
+void blk_mq_stat_add(struct request *rq);
+#endif
 #endif

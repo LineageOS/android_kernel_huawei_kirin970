@@ -67,6 +67,7 @@ static int snd_pcm_hw_params_old_user(struct snd_pcm_substream *substream,
 #endif
 static int snd_pcm_open(struct file *file, struct snd_pcm *pcm, int stream);
 
+extern void snd_pcm_reset_pre_time(struct snd_pcm_substream *substream);
 /*
  *
  */
@@ -1478,6 +1479,7 @@ static int snd_pcm_do_reset(struct snd_pcm_substream *substream, int state)
 		runtime->status->hw_ptr % runtime->period_size;
 	runtime->silence_start = runtime->status->hw_ptr;
 	runtime->silence_filled = 0;
+	snd_pcm_reset_pre_time(substream);
 	return 0;
 }
 
@@ -1986,7 +1988,7 @@ static int snd_pcm_hw_rule_sample_bits(struct snd_pcm_hw_params *params,
 #endif
 
 static unsigned int rates[] = { 5512, 8000, 11025, 16000, 22050, 32000, 44100,
-                                 48000, 64000, 88200, 96000, 176400, 192000 };
+                                 48000, 64000, 88200, 96000, 176400, 192000, 384000 };
 
 const struct snd_pcm_hw_constraint_list snd_pcm_known_rates = {
 	.count = ARRAY_SIZE(rates),
@@ -2729,6 +2731,7 @@ static int snd_pcm_sync_ptr(struct snd_pcm_substream *substream,
 	sync_ptr.s.status.hw_ptr = status->hw_ptr;
 	sync_ptr.s.status.tstamp = status->tstamp;
 	sync_ptr.s.status.suspended_state = status->suspended_state;
+	sync_ptr.s.status.audio_tstamp = status->audio_tstamp;
 	snd_pcm_stream_unlock_irq(substream);
 	if (copy_to_user(_sync_ptr, &sync_ptr, sizeof(sync_ptr)))
 		return -EFAULT;

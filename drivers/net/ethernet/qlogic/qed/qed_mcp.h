@@ -35,7 +35,6 @@ struct qed_mcp_link_params {
 
 struct qed_mcp_link_capabilities {
 	u32 speed_capabilities;
-	bool default_speed_autoneg;
 };
 
 struct qed_mcp_link_state {

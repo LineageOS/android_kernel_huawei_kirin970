@@ -108,6 +108,9 @@ static int mode_string(char *buf, unsigned int offset,
 	char m = 'U';
 	char v = 'p';
 
+	if (mode == NULL)
+		return -EINVAL;
+
 	if (mode->flag & FB_MODE_IS_DETAILED)
 		m = 'D';
 	if (mode->flag & FB_MODE_IS_VESA)
@@ -120,8 +123,8 @@ static int mode_string(char *buf, unsigned int offset,
 	if (mode->vmode & FB_VMODE_DOUBLE)
 		v = 'd';
 
-	return snprintf(&buf[offset], PAGE_SIZE - offset, "%c:%dx%d%c-%d\n",
-	                m, mode->xres, mode->yres, v, mode->refresh);
+	return min((int)(PAGE_SIZE - offset), snprintf(&buf[offset], PAGE_SIZE - offset, "%c:%dx%d%c-%d\n",
+	                m, mode->xres, mode->yres, v, mode->refresh));
 }
 
 static ssize_t store_mode(struct device *device, struct device_attribute *attr,
@@ -208,11 +211,18 @@ static ssize_t show_modes(struct device *device, struct device_attribute *attr,
 	const struct fb_videomode *mode;
 
 	i = 0;
+	console_lock();
+	if (!lock_fb_info(fb_info)) {
+		console_unlock();
+		return -ENODEV;
+	}
 	list_for_each(pos, &fb_info->modelist) {
 		modelist = list_entry(pos, struct fb_modelist, list);
 		mode = &modelist->mode;
 		i += mode_string(buf, i, mode);
 	}
+	unlock_fb_info(fb_info);
+	console_unlock();
 	return i;
 }
 

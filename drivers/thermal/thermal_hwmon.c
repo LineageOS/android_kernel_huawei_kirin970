@@ -30,7 +30,7 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include "thermal_hwmon.h"
-
+#include <asm/page.h>
 /* hwmon sys I/F */
 /* thermal zone devices with the same type share one hwmon device */
 struct thermal_hwmon_device {
@@ -102,7 +102,7 @@ temp_crit_show(struct device *dev, struct device_attribute *attr, char *buf)
 	if (ret)
 		return ret;
 
-	return sprintf(buf, "%d\n", temperature);
+	return snprintf(buf, PAGE_SIZE, "%d\n", temperature);
 }
 
 

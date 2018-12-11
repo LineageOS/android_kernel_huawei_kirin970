@@ -100,4 +100,8 @@ config USB_NET_RNDIS_WLAN
 
 	  If you choose to build a module, it'll be called rndis_wlan.
 
+config WIFI_CONTROL_FUNC
+        bool "Enable WiFi control function abstraction"
+        help
+          Enables Power/Reset/Carddetect function abstraction
 endif # WLAN

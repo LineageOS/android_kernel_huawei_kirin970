@@ -29,6 +29,14 @@ config RTC_HCTOSYS
 	  the value read from a specified RTC device. This is useful to avoid
 	  unnecessary fsck runs at boot time, and to network better.
 
+config HISI_PMU_RTC_READCOUNT
+    bool "Set the interface pmu_rtc_readcount exposed"
+    default n
+    help
+          If you say yes here, the system time (wall clock) will be set using
+          the value read from a specified RTC device. This is useful to avoid
+          unnecessary fsck runs at boot time, and to network better.
+
 config RTC_HCTOSYS_DEVICE
 	string "RTC used to set the system time"
 	depends on RTC_HCTOSYS
@@ -1721,5 +1729,44 @@ config RTC_DRV_HID_SENSOR_TIME
 	  If this driver is compiled as a module, it will be named
 	  rtc-hid-sensor-time.
 
+config RTC_DRV_HISI_PMIC
+	tristate "Hisilicon PMIC RTC"
+	depends on HISI_PMIC
+	help
+	  If you say yes here you get support for Hisilicon PMIC
+	  RTC functions. If an interrupt is associated with the device,
+	  the alarm functionality is supported.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-hisi-pmic.
+
+config RTC_DRV_HISI_PMIC_SPMI
+	tristate "Hisilicon PMIC RTC SPMI"
+	depends on HISI_SPMI
+	help
+	  If you say yes here you get support for Hisilicon PMIC
+	  RTC functions. If an interrupt is associated with the device,
+	  the alarm functionality is supported.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-hisi-pmic-spmi.
+config HISI_RTC_LOG
+	tristate "Hisilicon PMIC RTC LOG"
+	depends on RTC_DRV_HISI_PMIC || RTC_DRV_HISI_PMIC_SPMI
+	help
+	  add logs.
+
+config HISI_RTC_SECURE_FEATURE
+	tristate "Hisilicon PMIC RTC SECURE FEATURE"
+	depends on RTC_DRV_HISI_PMIC || RTC_DRV_HISI_PMIC_SPMI
+	help
+	  pmu rtc secure feature.
+
+
+config HISI_RTC_TEST
+        tristate "Hisilicon PMIC RTC TEST FEATURE"
+        depends on RTC_DRV_HISI_PMIC || RTC_DRV_HISI_PMIC_SPMI
+        help
+          pmu rtc test feature
 
 endif # RTC_CLASS

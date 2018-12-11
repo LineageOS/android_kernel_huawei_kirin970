@@ -6,6 +6,8 @@
 #define __LINUX_BLK_TYPES_H
 
 #include <linux/types.h>
+#include <linux/timer.h>
+#include <linux/sched.h>
 #include <linux/bvec.h>
 
 struct bio_set;
@@ -16,8 +18,82 @@ struct block_device;
 struct io_context;
 struct cgroup_subsys_state;
 typedef void (bio_end_io_t) (struct bio *);
+typedef void (bio_throtl_end_io_t) (struct bio *);
 
+/*
+ * was for io checkpoint in io latency
+ */
 #ifdef CONFIG_BLOCK
+#ifdef CONFIG_HISI_BLK
+#undef  ADDITEM
+#define ADDITEM( _etype, _comment, _func_pointer )      _etype
+enum bio_process_stage_enum {
+	#include <linux/hisi_bio_stage_def.h>
+    BIO_PROC_STAGE_MAX
+};
+
+enum req_process_stage_enum {
+	#include <linux/hisi_req_stage_def.h>
+    REQ_PROC_STAGE_MAX
+};
+#undef  ADDITEM
+
+/*
+* This struct defines all the variable in vendor block layer.
+*/
+struct blk_bio_cust {
+	struct request_queue *q; /* The request queue where the bio is sent to */
+	struct block_device	*bi_bdev_part; /* The block device where the bio is sent to */
+	struct request *io_req; /* The request which carrys the bio */
+	struct task_struct *dispatch_task; /* Dispatch IO process task struct */
+	pid_t task_pid; /* Dispatch IO process PID */
+	pid_t task_tgid;/* Dispatch IO process TGID */
+	char task_comm[TASK_COMM_LEN];/* Dispatch IO process name */
+
+#define HISI_IO_IN_COUNT_SET	(1 << 0)
+#define HISI_IO_IN_COUNT_SKIP_ENDIO	(1 << 1) /* busy count for the BIO has not been added, so skip it */
+#define HISI_IO_IN_COUNT_ALREADY_ENDED	(1 << 2) /* this BIO has been ended already */
+#define HISI_IO_IN_COUNT_WILL_BE_SEND_AGAIN	(1 << 3)
+#define HISI_IO_IN_COUNT_DONE	(1 << 4)
+
+	unsigned char io_in_count; /*the bio has been count in busy idle module or not */
+	unsigned char fs_io_flag; /* io comes from fs or not */
+	unsigned char bi_async_flush; /* async flush flag */
+	unsigned char hot_cold_id; /* hot cold id */
+
+	/*
+	* Below info is IO latency
+	*/
+	ktime_t bio_stage_ktime[BIO_PROC_STAGE_MAX];
+	struct timer_list latency_expire_timer;
+	volatile int latency_timer_running;
+
+	unsigned int pg_count; /* page count in current bio */
+	unsigned char latency_classify; /* bio classify in latency statistic */
+	struct timespec submit_tp;
+	s64 hw_latency; /* IO latency in low level driver */
+	/*
+	* Below info is for inline crypto
+	*/
+	void	*ci_key;
+	int	ci_key_len;
+	int	ci_key_index;
+	pgoff_t index;
+};
+#endif
+#ifdef CONFIG_F2FS_CHECK_FS
+struct access_timestamp {
+	struct timespec time;
+	struct list_head list;
+};
+struct bdev_access_info {
+	struct list_head access_list;
+	atomic_t open_cnt;
+	spinlock_t lock;
+};
+extern struct bdev_access_info bdev_access_info;
+extern atomic_t f2fs_mounted; /* how may f2fs mounted */
+#endif
 /*
  * main unit of I/O for the block layer and lower layers (ie drivers and
  * stacking drivers)
@@ -25,7 +101,6 @@ typedef void (bio_end_io_t) (struct bio *);
 struct bio {
 	struct bio		*bi_next;	/* request queue link */
 	struct block_device	*bi_bdev;
-	unsigned short		bi_write_hint;
 	int			bi_error;
 	unsigned int		bi_opf;		/* bottom bits req flags,
 						 * top bits REQ_OP. Use
@@ -53,6 +128,24 @@ struct bio {
 	bio_end_io_t		*bi_end_io;
 
 	void			*bi_private;
+#ifdef CONFIG_F2FS_CHECK_FS
+	unsigned int		bi_start_blkaddr;
+#endif
+
+#ifdef CONFIG_HISI_BLK
+	struct blk_bio_cust hisi_bio;
+	struct list_head counted_list_node;
+#endif
+
+#ifdef CONFIG_BLK_DEV_THROTTLING
+	bio_throtl_end_io_t     *bi_throtl_end_io1;
+	void                    *bi_throtl_private1;
+	bio_throtl_end_io_t     *bi_throtl_end_io2;
+	void                    *bi_throtl_private2;
+	unsigned long           bi_throtl_in_queue;
+#endif
+
+
 #ifdef CONFIG_BLK_CGROUP
 	/*
 	 * Optional ioc and css associated with this bio.  Put on bio
@@ -163,11 +256,14 @@ enum rq_flag_bits {
 	__REQ_INTEGRITY,	/* I/O includes block integrity payload */
 	__REQ_FUA,		/* forced unit access */
 	__REQ_PREFLUSH,		/* request for cache flush */
+	__REQ_BG,		/* background activity */
+	__REQ_FG,		/* foreground activity */
 
 	/* bio only flags */
 	__REQ_RAHEAD,		/* read ahead, can fail anytime */
 	__REQ_THROTTLED,	/* This bio has already been subjected to
 				 * throttling rules. Don't do it again. */
+	__REQ_CHAINED,
 
 	/* request only flags */
 	__REQ_SORTED,		/* elevator knows about this request */
@@ -190,6 +286,7 @@ enum rq_flag_bits {
 	__REQ_PM,		/* runtime pm request */
 	__REQ_HASHED,		/* on IO scheduler merge hash */
 	__REQ_MQ_INFLIGHT,	/* track inflight for MQ */
+	__REQ_URGENT,           /* urgent request */
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -201,12 +298,15 @@ enum rq_flag_bits {
 #define REQ_PRIO		(1ULL << __REQ_PRIO)
 #define REQ_NOIDLE		(1ULL << __REQ_NOIDLE)
 #define REQ_INTEGRITY		(1ULL << __REQ_INTEGRITY)
+#define REQ_URGENT              (1ULL << __REQ_URGENT)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
+
 #define REQ_COMMON_MASK \
 	(REQ_FAILFAST_MASK | REQ_SYNC | REQ_META | REQ_PRIO | REQ_NOIDLE | \
-	 REQ_PREFLUSH | REQ_FUA | REQ_INTEGRITY | REQ_NOMERGE)
+	 REQ_PREFLUSH | REQ_FUA | REQ_INTEGRITY | REQ_NOMERGE | REQ_BG | REQ_FG)
+
 #define REQ_CLONE_MASK		REQ_COMMON_MASK
 
 /* This mask is used for both bio and request merge checking */
@@ -215,6 +315,7 @@ enum rq_flag_bits {
 
 #define REQ_RAHEAD		(1ULL << __REQ_RAHEAD)
 #define REQ_THROTTLED		(1ULL << __REQ_THROTTLED)
+#define REQ_CHAINED		(1ULL << __REQ_CHAINED)
 
 #define REQ_SORTED		(1ULL << __REQ_SORTED)
 #define REQ_SOFTBARRIER		(1ULL << __REQ_SOFTBARRIER)
@@ -231,6 +332,8 @@ enum rq_flag_bits {
 #define REQ_COPY_USER		(1ULL << __REQ_COPY_USER)
 #define REQ_PREFLUSH		(1ULL << __REQ_PREFLUSH)
 #define REQ_FLUSH_SEQ		(1ULL << __REQ_FLUSH_SEQ)
+#define REQ_BG			(1ULL << __REQ_BG)
+#define REQ_FG			(1ULL << __REQ_FG)
 #define REQ_IO_STAT		(1ULL << __REQ_IO_STAT)
 #define REQ_MIXED_MERGE		(1ULL << __REQ_MIXED_MERGE)
 #define REQ_PM			(1ULL << __REQ_PM)
@@ -251,6 +354,14 @@ enum req_op {
 typedef unsigned int blk_qc_t;
 #define BLK_QC_T_NONE	-1U
 #define BLK_QC_T_SHIFT	16
+
+struct blk_rq_stat {
+	s64 mean;
+	u64 min;
+	u64 max;
+	s64 nr_samples;
+	s64 time;
+};
 
 static inline bool blk_qc_t_valid(blk_qc_t cookie)
 {

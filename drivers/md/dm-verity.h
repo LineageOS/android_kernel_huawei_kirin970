@@ -36,8 +36,10 @@ struct dm_verity {
 	struct dm_dev *hash_dev;
 	struct dm_target *ti;
 	struct dm_bufio_client *bufio;
-	char *alg_name;
-	struct crypto_shash *tfm;
+	char *alg_name_sha2ce;
+	char *alg_name_sha256;
+	struct crypto_shash *tfm_sha2ce;
+	struct crypto_shash *tfm_sha256;
 	u8 *root_digest;	/* digest of the root block */
 	u8 *salt;		/* salt: its size is salt_size */
 	u8 *zero_digest;	/* digest for a zero block */
@@ -57,6 +59,8 @@ struct dm_verity {
 	enum verity_mode mode;	/* mode for handling verification errors */
 	unsigned corrupted_errs;/* Number of errors for corrupted blocks */
 
+	mempool_t *vec_mempool; /* mempool of bio vector */
+
 	struct workqueue_struct *verify_wq;
 
 	/* starting blocks for each tree level. 0 is the lowest level. */
@@ -64,6 +68,10 @@ struct dm_verity {
 
 	struct dm_verity_fec *fec;	/* forward error correction */
 	unsigned long *validated_blocks; /* bitset blocks validated */
+
+#if defined (CONFIG_DM_VERITY_HW_RETRY)
+	int verify_failed_flag;
+#endif
 };
 
 struct dm_verity_io {
@@ -71,6 +79,7 @@ struct dm_verity_io {
 
 	/* original value of bio->bi_end_io */
 	bio_end_io_t *orig_bi_end_io;
+	void *orig_bi_private;
 
 	sector_t block;
 	unsigned n_blocks;
@@ -137,4 +146,12 @@ extern void verity_io_hints(struct dm_target *ti, struct queue_limits *limits);
 extern void verity_dtr(struct dm_target *ti);
 extern int verity_ctr(struct dm_target *ti, unsigned argc, char **argv);
 extern int verity_map(struct dm_target *ti, struct bio *bio);
+extern void dm_verity_avb_error_handler(void);
+int verity_hash_init(struct dm_verity *v, struct shash_desc *desc, u32 alg);
+int verity_hash_update(struct dm_verity *v, struct shash_desc *desc,
+			      const u8 *data, size_t len);
+int verity_hash_final(struct dm_verity *v, struct shash_desc *desc,
+			     u8 *digest);
+int verity_bv_hash_update(struct dm_verity *v, struct dm_verity_io *io,
+				 u8 *data, size_t len);
 #endif /* DM_VERITY_H */

@@ -17,8 +17,7 @@
 #ifndef _LINUX_COMPAT_ION_H
 #define _LINUX_COMPAT_ION_H
 
-#if IS_ENABLED(CONFIG_COMPAT)
-
+#if IS_ENABLED(CONFIG_COMPAT) /*lint !e553*/
 long compat_ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 #else

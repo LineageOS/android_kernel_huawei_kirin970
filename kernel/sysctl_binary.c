@@ -22,7 +22,9 @@
 struct bin_table;
 typedef ssize_t bin_convert_t(struct file *file,
 	void __user *oldval, size_t oldlen, void __user *newval, size_t newlen);
-
+#ifdef CONFIG_HISI_SCSI_UFS_DUMP
+extern unsigned int ufs_dump;
+#endif
 static bin_convert_t bin_dir;
 static bin_convert_t bin_string;
 static bin_convert_t bin_intvec;
@@ -170,7 +172,13 @@ static const struct bin_table bin_vm_table[] = {
 	{ CTL_INT,	VM_PANIC_ON_OOM,		"panic_on_oom" },
 	{ CTL_INT,	VM_VDSO_ENABLED,		"vdso_enabled" },
 	{ CTL_INT,	VM_MIN_SLAB,			"min_slab_ratio" },
-
+#ifdef CONFIG_HISI_SCSI_UFS_DUMP
+asdfasdf
+	{ CTL_INT,	VM_UFS_DUMP,			"ufs_dump" },
+#endif
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+	{ CTL_INT,	VM_PAGECACHE_DUMP,		"pagecache_dump" },
+#endif
 	{}
 };
 

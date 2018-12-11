@@ -207,8 +207,7 @@ int ima_appraise_measurement(enum ima_hooks func,
 		if (opened & FILE_CREATED)
 			iint->flags |= IMA_NEW_FILE;
 		if ((iint->flags & IMA_NEW_FILE) &&
-		    (!(iint->flags & IMA_DIGSIG_REQUIRED) ||
-		     (inode->i_size == 0)))
+		    !(iint->flags & IMA_DIGSIG_REQUIRED))
 			status = INTEGRITY_PASS;
 		goto out;
 	}

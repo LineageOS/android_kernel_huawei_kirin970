@@ -312,3 +312,18 @@ config PM_GENERIC_DOMAINS_OF
 
 config CPU_PM
 	bool
+
+config PM_FAIL_DEBUG
+	bool "PM Fail debug support"
+	def_bool n
+	help
+	  PM suspend fail debug. To find out which process get timerfd wakeup source.
+	  following error log:
+	  	PM: Wakeup pending, aborting suspend
+	  	active wakeup source: [timerfd]
+	  	PM: Some devices failed to suspend, or early wake event detected
+
+config HUAWEI_SLEEPLOG
+    bool "huawei sleeplogcat"
+    default n
+	help

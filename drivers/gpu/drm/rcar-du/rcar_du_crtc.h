@@ -15,7 +15,6 @@
 #define __RCAR_DU_CRTC_H__
 
 #include <linux/mutex.h>
-#include <linux/spinlock.h>
 #include <linux/wait.h>
 
 #include <drm/drmP.h>
@@ -34,9 +33,6 @@ struct rcar_du_vsp;
  * @started: whether the CRTC has been started and is running
  * @event: event to post when the pending page flip completes
  * @flip_wait: wait queue used to signal page flip completion
- * @vblank_lock: protects vblank_wait and vblank_count
- * @vblank_wait: wait queue used to signal vertical blanking
- * @vblank_count: number of vertical blanking interrupts to wait for
  * @outputs: bitmask of the outputs (enum rcar_du_output) driven by this CRTC
  * @group: CRTC group this CRTC belongs to
  */
@@ -51,10 +47,6 @@ struct rcar_du_crtc {
 
 	struct drm_pending_vblank_event *event;
 	wait_queue_head_t flip_wait;
-
-	spinlock_t vblank_lock;
-	wait_queue_head_t vblank_wait;
-	unsigned int vblank_count;
 
 	unsigned int outputs;
 

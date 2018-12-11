@@ -33,14 +33,20 @@ config ION_TEGRA
 	help
 	  Choose this option if you wish to use ion on an nVidia Tegra.
 
+config ION_POOL_CACHE_POLICY
+	bool "Ion set page pool cache policy"
+	depends on ION
+	default y if X86
+	help
+	  Choose this option if need to explicity set cache policy of the
+	  pages in the page pool.
+
 config ION_HISI
 	tristate "Ion for Hisilicon"
-	depends on ARCH_HISI && ION
+	depends on ION
 	select ION_OF
 	help
 	  Choose this option if you wish to use ion on Hisilicon Platform.
-
-source "drivers/staging/android/ion/hisilicon/Kconfig"
 
 config ION_OF
 	bool "Devicetree support for Ion"
@@ -52,3 +58,46 @@ config ION_OF
 	  extensions
 
 	  If using Ion and devicetree, you should say Y here
+
+config HISI_ION_SECSG_DEBUG
+	bool "Hisilicon ION secsg heap support"
+	depends on ION_HISI_SECSG
+	default n
+	help
+	  if you want to debug ion secsg, you should select this.
+
+config ION_HISI_SECSG
+	bool "Hisilicon ION secsg heap support"
+	depends on ION_HISI
+	help
+	 if you want to use secsg heap, you should select this.
+
+
+config ION_HISI_DMA_POOL
+	bool "Hisilicon ION DMA pool heap support"
+	depends on ION_HISI
+	help
+	  if you want to use DMA pool heap, you should select this.
+
+config ION_HISI_SECCM
+	bool "Hisilicon ION seccm heap support"
+	depends on ION_HISI
+	help
+	 if you want to use seccm heap, you should select this.
+
+config ION_HISI_SUPPORT_4GPLUS
+	bool "Hisilicon ION can support allocation above 4G"
+	depends on ION
+	default n
+
+config HISI_SMARTPOOL_OPT
+	bool "Support Hisilicon Smartpool"
+	default n
+	help
+	  This driver supports Hisilicon Smartpool.
+
+config HISI_SPECIAL_SCENE_POOL
+	bool "Support Hisilicon Special Scenes Pool"
+	default n
+	help
+	  This driver supports Hisilicon Special Scenes Pool.

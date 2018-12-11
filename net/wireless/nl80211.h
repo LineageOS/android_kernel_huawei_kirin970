@@ -96,5 +96,12 @@ nl80211_radar_notify(struct cfg80211_registered_device *rdev,
 void nl80211_send_ap_stopped(struct wireless_dev *wdev);
 
 void cfg80211_rdev_free_coalesce(struct cfg80211_registered_device *rdev);
-
+#if (defined (CONFIG_HW_VOWIFI) || defined (CONFIG_HW_ABS))
+void
+cfg80211_do_drv_private(struct net_device *dev, gfp_t gfp, enum nl80211_commands command);
+#endif
+#if (defined (CONFIG_HW_WIFI_MSS) || defined (CONFIG_HW_WIFI_RSSI))
+void cfg80211_do_drv_private_params(struct net_device *dev, gfp_t gfp,
+			enum nl80211_commands command, u32 subcmd, const u8 *ie, size_t ie_len);
+#endif
 #endif /* __NET_WIRELESS_NL80211_H */

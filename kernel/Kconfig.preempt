@@ -56,3 +56,5 @@ endchoice
 
 config PREEMPT_COUNT
        bool
+
+source "kernel/sched/frame/Kconfig"

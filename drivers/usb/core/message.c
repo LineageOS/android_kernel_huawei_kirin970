@@ -17,6 +17,8 @@
 #include <linux/usb/hcd.h>	/* for usbcore internals */
 #include <asm/byteorder.h>
 
+#include <linux/hisi/usb/hisi_usb.h>
+
 #include "usb.h"
 
 static void cancel_async_set_config(struct usb_device *udev);
@@ -1782,10 +1784,12 @@ free_interfaces:
 		}
 
 		i = dev->bus_mA - usb_get_max_power(dev, cp);
-		if (i < 0)
+		if (i < 0) {
+			hw_usb_host_abnormal_event_notify(USB_HOST_EVENT_POWER_INSUFFICIENT);
 			dev_warn(&dev->dev, "new config #%d exceeds power "
 					"limit by %dmA\n",
 					configuration, -i);
+		}
 	}
 
 	/* Wake up the device so we can send it the Set-Config request */

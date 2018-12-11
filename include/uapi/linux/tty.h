@@ -5,8 +5,11 @@
  * 'tty.h' defines some structures used by tty_io.c and some defines.
  */
 
+#ifdef CONFIG_HISI_TTY
+#define NR_LDISCS		50
+#else
 #define NR_LDISCS		30
-
+#endif
 /* line disciplines */
 #define N_TTY		0
 #define N_SLIP		1

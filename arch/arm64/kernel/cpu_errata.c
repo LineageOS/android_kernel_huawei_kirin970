@@ -16,10 +16,156 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <linux/arm-smccc.h>
+#include <linux/psci.h>
 #include <linux/types.h>
 #include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/cpufeature.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/slab.h>
+#include <linux/perf_event.h>
+#include <linux/perf/arm_pmu.h>
+
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+struct wa2_pmu_monitor {
+	struct perf_event *pevent;
+	bool monitor_started;
+};
+
+DEFINE_PER_CPU(struct wa2_pmu_monitor, wa2_monitor);
+DEFINE_PER_CPU_READ_MOSTLY(u64, pmu_counter);
+DEFINE_PER_CPU_READ_MOSTLY(u64, v2_apply);
+
+bool need_to_apply(int cpu)
+{
+	struct wa2_pmu_monitor* monitor = &per_cpu(wa2_monitor, cpu);
+	u64 need_apply = 0;
+
+	if (!monitor->monitor_started || monitor->pevent == NULL)
+		return true;
+
+	need_apply = per_cpu(v2_apply, cpu);
+	if (need_apply) {
+		per_cpu(v2_apply, cpu) = 0;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+static struct perf_event_attr *alloc_attr(void)
+{
+	struct perf_event_attr *attr;
+
+	attr = kzalloc(sizeof(struct perf_event_attr), GFP_KERNEL);
+	if (!attr)
+		return attr;
+
+	attr->type = PERF_TYPE_RAW;
+	attr->size = sizeof(struct perf_event_attr);
+	attr->pinned = 1;
+	attr->exclude_idle = 1;
+
+	return attr;
+}
+
+/* ignore debug code */
+int get_wa2_monitor_status(void)
+{
+	struct wa2_pmu_monitor *monitor;
+	unsigned long stat = 0;
+	int cpu;
+	u64 counter, need_apply;
+
+	for_each_possible_cpu(cpu) {
+		need_apply = per_cpu(v2_apply, cpu);
+		monitor = &per_cpu(wa2_monitor, cpu);
+		if (monitor->monitor_started) {
+			stat |= BIT(cpu);
+			counter = per_cpu(pmu_counter, cpu);
+			pr_err("cpu=%d wa2_monitor_enable, counter=%llu, need-apply=%llu\n", cpu, counter, need_apply);
+		} else {
+			pr_err("cpu=%d,wa2_monitor_disable, need_apply=%llu\n", cpu, need_apply);
+		}
+		per_cpu(v2_apply, cpu) = 0;
+	}
+
+	return stat;
+}
+
+extern void hisi_get_slow_cpus(struct cpumask * cpumask);
+extern u32 armv8pmu_get_counter(struct perf_event *event);
+static int __init wa2_monitor_init(void)
+{
+	int cpu;
+	struct wa2_pmu_monitor *monitor;
+	struct perf_event *pevent;
+	struct perf_event_attr *attr;
+	struct cpumask slow_cpus;
+
+	attr = alloc_attr();
+	if (!attr)
+		return -ENOMEM;
+
+	attr->config = 0x11c;
+
+	hisi_get_slow_cpus(&slow_cpus);
+
+	for_each_possible_cpu(cpu) {
+		monitor = &per_cpu(wa2_monitor, cpu);
+
+		/* littlecores doesn't need to enable this PMU event */
+		if (cpumask_test_cpu(cpu, &slow_cpus)) {
+			monitor->monitor_started = false;
+			monitor->pevent = NULL;
+
+			per_cpu(pmu_counter, cpu) = 0;
+			continue;
+		}
+
+		pevent = perf_event_create_kernel_counter(attr, cpu, NULL,
+							  NULL, NULL);
+		if (IS_ERR(pevent)) {
+			monitor->monitor_started = false;
+			monitor->pevent = NULL;
+			per_cpu(pmu_counter, cpu) = 0;
+			pr_err("fail to create wa2 pmu counter for cpu%d\n", cpu);
+		} else {
+			perf_event_enable(pevent);
+			per_cpu(pmu_counter, cpu) = armv8pmu_get_counter(pevent);
+
+			monitor->pevent = pevent;
+			monitor->monitor_started = true;
+			pr_info("success to create wa2 pmu counter for cpu%d\n", cpu);
+		}
+	}
+
+	kfree(attr);
+
+	return 0;
+}
+
+static void __exit wa2_monitor_exit(void)
+{
+	int cpu;
+	struct wa2_pmu_monitor *monitor;
+
+	for_each_possible_cpu(cpu) {
+		monitor = &per_cpu(wa2_monitor, cpu);
+		if (!monitor->monitor_started)
+			continue;
+
+		monitor->monitor_started = false;
+		perf_event_release_kernel(monitor->pevent);
+		monitor->pevent = NULL;
+	}
+}
+
+late_initcall(wa2_monitor_init);
+module_exit(wa2_monitor_exit);
+#endif
 
 static bool __maybe_unused
 is_affected_midr_range(const struct arm64_cpu_capabilities *entry, int scope)
@@ -138,21 +284,37 @@ static void call_smc_arch_workaround_1(void)
 	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
 }
 
+#if 0
 static void call_hvc_arch_workaround_1(void)
 {
 	arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
 }
+#endif
 
 static int enable_smccc_arch_workaround_1(void *data)
 {
 	const struct arm64_cpu_capabilities *entry = data;
 	bp_hardening_cb_t cb;
 	void *smccc_start, *smccc_end;
+#if 0
 	struct arm_smccc_res res;
+#endif
+
+	unsigned long part_num = read_cpuid_part_number();
+
+	if ((part_num != ARM_CPU_PART_CORTEX_A72)
+			&& (part_num != ARM_CPU_PART_CORTEX_A73)
+			&& (part_num != ARM_CPU_PART_ENYO))
+		return 0;
 
 	if (!entry->matches(entry, SCOPE_LOCAL_CPU))
 		return 0;
 
+	cb = call_smc_arch_workaround_1;
+	smccc_start = __smccc_workaround_1_smc_start;
+	smccc_end = __smccc_workaround_1_smc_end;
+
+#if 0
 	if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
 		return 0;
 
@@ -160,7 +322,7 @@ static int enable_smccc_arch_workaround_1(void *data)
 	case PSCI_CONDUIT_HVC:
 		arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
 				  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
-		if (res.a0)
+		if ((int)res.a0 < 0)
 			return 0;
 		cb = call_hvc_arch_workaround_1;
 		smccc_start = __smccc_workaround_1_hvc_start;
@@ -170,7 +332,7 @@ static int enable_smccc_arch_workaround_1(void *data)
 	case PSCI_CONDUIT_SMC:
 		arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
 				  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
-		if (res.a0)
+		if ((int)res.a0 < 0)
 			return 0;
 		cb = call_smc_arch_workaround_1;
 		smccc_start = __smccc_workaround_1_smc_start;
@@ -180,12 +342,204 @@ static int enable_smccc_arch_workaround_1(void *data)
 	default:
 		return 0;
 	}
+#endif
 
 	install_bp_hardening_cb(entry, cb, smccc_start, smccc_end);
 
 	return 0;
 }
 #endif	/* CONFIG_HARDEN_BRANCH_PREDICTOR */
+
+#ifdef CONFIG_ARM64_SSBD
+DEFINE_PER_CPU_READ_MOSTLY(u64, arm64_ssbd_callback_required);
+
+int ssbd_state __read_mostly = ARM64_SSBD_KERNEL;
+
+static const struct ssbd_options {
+	const char	*str;
+	int		state;
+} ssbd_options[] = {
+	{ "force-on",	ARM64_SSBD_FORCE_ENABLE, },
+	{ "force-off",	ARM64_SSBD_FORCE_DISABLE, },
+	{ "kernel",	ARM64_SSBD_KERNEL, },
+};
+
+static int __init ssbd_cfg(char *buf)
+{
+	int i;
+
+	if (!buf || !buf[0])
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(ssbd_options); i++) {
+		int len = strlen(ssbd_options[i].str);
+
+		if (strncmp(buf, ssbd_options[i].str, len))
+			continue;
+
+		ssbd_state = ssbd_options[i].state;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+early_param("ssbd", ssbd_cfg);
+
+void __init arm64_update_smccc_conduit(struct alt_instr *alt,
+				       __le32 *origptr, __le32 *updptr,
+				       int nr_inst)
+{
+	u32 insn;
+
+	BUG_ON(nr_inst != 1);
+
+#if 0
+	switch (psci_ops.conduit) {
+	case PSCI_CONDUIT_HVC:
+		insn = aarch64_insn_get_hvc_value();
+		break;
+	case PSCI_CONDUIT_SMC:
+		insn = aarch64_insn_get_smc_value();
+		break;
+	default:
+		return;
+	}
+#endif
+	insn = aarch64_insn_get_smc_value();
+
+	*updptr = cpu_to_le32(insn);
+}
+
+void __init arm64_enable_wa2_handling(struct alt_instr *alt,
+				      __le32 *origptr, __le32 *updptr,
+				      int nr_inst)
+{
+	BUG_ON(nr_inst != 1);
+	/*
+	 * Only allow mitigation on EL1 entry/exit and guest
+	 * ARCH_WORKAROUND_2 handling if the SSBD state allows it to
+	 * be flipped.
+	 */
+	if (arm64_get_ssbd_state() == ARM64_SSBD_KERNEL)
+		*updptr = cpu_to_le32(aarch64_insn_gen_nop());
+}
+
+void arm64_set_ssbd_mitigation(bool state)
+{
+#if 0
+	switch (psci_ops.conduit) {
+	case PSCI_CONDUIT_HVC:
+		arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_2, state, NULL);
+		break;
+
+	case PSCI_CONDUIT_SMC:
+		arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_2, state, NULL);
+		break;
+
+	default:
+		WARN_ON_ONCE(1);
+		break;
+	}
+#endif
+	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_2, state, NULL);
+}
+
+static bool has_ssbd_mitigation(const struct arm64_cpu_capabilities *entry,
+				    int scope)
+{
+	struct arm_smccc_res res;
+	bool required = true;
+	s32 val;
+
+	WARN_ON(scope != SCOPE_LOCAL_CPU || preemptible());
+
+#if 0
+	if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
+		ssbd_state = ARM64_SSBD_UNKNOWN;
+		return false;
+	/*
+	 * The probe function return value is either negative
+	 * (unsupported or mitigated), positive (unaffected), or zero
+	 * (requires mitigation). We only need to do anything in the
+	 * last case.
+	 */
+
+	switch (psci_ops.conduit) {
+	case PSCI_CONDUIT_HVC:
+		arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
+				  ARM_SMCCC_ARCH_WORKAROUND_2, &res);
+		break;
+
+	case PSCI_CONDUIT_SMC:
+		arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
+				  ARM_SMCCC_ARCH_WORKAROUND_2, &res);
+		break;
+
+	default:
+		ssbd_state = ARM64_SSBD_UNKNOWN;
+		return false;
+	}
+#endif
+	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
+			  ARM_SMCCC_ARCH_WORKAROUND_2, &res);
+
+	val = (s32)res.a0;
+
+	switch (val) {
+	case SMCCC_RET_NOT_SUPPORTED:
+		pr_info("%s mitigation not supported\n", entry->desc);
+		ssbd_state = ARM64_SSBD_UNKNOWN;
+		return false;
+
+	case SMCCC_RET_NOT_REQUIRED:
+		pr_info("%s mitigation not required,%d\n", entry->desc, val);
+		ssbd_state = ARM64_SSBD_MITIGATED;
+		return false;
+
+	case SMCCC_RET_SUCCESS:
+		pr_info("%s mitigation capable\n", entry->desc);
+		required = true;
+		break;
+
+	case 1:	/* Mitigation not required on this CPU */
+		pr_info("%s mitigation not required,%d\n", entry->desc, val);
+		required = false;
+		break;
+
+	default:
+		WARN_ON(1);
+		return false;
+	}
+
+	switch (ssbd_state) {
+	case ARM64_SSBD_FORCE_DISABLE:
+		pr_info("%s disabled from command-line\n", entry->desc);
+		arm64_set_ssbd_mitigation(false);
+		required = false;
+		break;
+
+	case ARM64_SSBD_KERNEL:
+		if (required) {
+			pr_info("%s kernel enabled\n", entry->desc);
+			__this_cpu_write(arm64_ssbd_callback_required, 1);
+			arm64_set_ssbd_mitigation(true);
+		}
+		break;
+
+	case ARM64_SSBD_FORCE_ENABLE:
+		pr_info("%s forced from command-line\n", entry->desc);
+		arm64_set_ssbd_mitigation(true);
+		required = true;
+		break;
+
+	default:
+		WARN_ON(1);
+		break;
+	}
+
+	return required;
+}
+#endif	/* CONFIG_ARM64_SSBD */
 
 #define MIDR_RANGE(model, min, max) \
 	.def_scope = SCOPE_LOCAL_CPU, \
@@ -308,6 +662,19 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
 		MIDR_ALL_VERSIONS(MIDR_CAVIUM_THUNDERX2),
 		.enable = enable_smccc_arch_workaround_1,
+	},
+	{
+		.capability = ARM64_HARDEN_BRANCH_PREDICTOR,
+		MIDR_ALL_VERSIONS(MIDR_CORTEX_ENYO),
+		.enable = enable_smccc_arch_workaround_1,
+	},
+#endif
+#ifdef CONFIG_ARM64_SSBD
+	{
+		.desc = "Speculative Store Bypass Disable",
+		.capability = ARM64_SSBD,
+		.def_scope = SCOPE_LOCAL_CPU,
+		.matches = has_ssbd_mitigation,
 	},
 #endif
 	{

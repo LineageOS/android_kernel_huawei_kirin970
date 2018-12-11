@@ -61,7 +61,7 @@ static int try_to_freeze_tasks(bool user_only)
 
 		if (!user_only) {
 			wq_busy = freeze_workqueues_busy();
-			todo += wq_busy;
+			todo += wq_busy;/*lint !e514*/
 		}
 
 		if (!todo || time_after(jiffies, end_time))
@@ -100,7 +100,7 @@ static int try_to_freeze_tasks(bool user_only)
 		pr_err("Freezing of tasks failed after %d.%03d seconds"
 		       " (%d tasks refusing to freeze, wq_busy=%d):\n",
 		       elapsed_msecs / 1000, elapsed_msecs % 1000,
-		       todo - wq_busy, wq_busy);
+		       todo - wq_busy, wq_busy);/*lint !e514*/
 
 		if (wq_busy)
 			show_workqueue_state();

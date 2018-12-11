@@ -87,13 +87,13 @@ EXPORT_SYMBOL(dcache_dir_close);
 /* parent is locked at least shared */
 static struct dentry *next_positive(struct dentry *parent,
 				    struct list_head *from,
-				    int count)
+				    loff_t count)
 {
 	unsigned *seq = &parent->d_inode->i_dir_seq, n;
 	struct dentry *res;
 	struct list_head *p;
 	bool skipped;
-	int i;
+	loff_t i;
 
 retry:
 	i = count;

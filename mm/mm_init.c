@@ -71,6 +71,32 @@ void __init mminit_verify_pageflags_layout(void)
 	unsigned long or_mask, add_mask;
 
 	shift = 8 * sizeof(unsigned long);
+#ifdef CONFIG_TASK_PROTECT_LRU
+	width = shift - SECTIONS_WIDTH - NODES_WIDTH - ZONES_WIDTH - LAST_CPUPID_SHIFT
+		- PROTECT_LRU_WIDTH;
+	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_widths",
+		"Section %d Node %d Zone %d Lastcpupid %d Protect %d Flags %d\n",
+		SECTIONS_WIDTH,
+		NODES_WIDTH,
+		ZONES_WIDTH,
+		LAST_CPUPID_WIDTH,
+		PROTECT_LRU_WIDTH,
+		NR_PAGEFLAGS);
+	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_shifts",
+		"Section %d Node %d Zone %d Lastcpupid %d Protect %d\n",
+		SECTIONS_SHIFT,
+		NODES_SHIFT,
+		ZONES_SHIFT,
+		LAST_CPUPID_SHIFT,
+		PROTECT_LRU_WIDTH);
+	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_pgshifts",
+		"Section %lu Node %lu Zone %lu Lastcpupid %lu Protect %d\n",
+		(unsigned long)SECTIONS_PGSHIFT,
+		(unsigned long)NODES_PGSHIFT,
+		(unsigned long)ZONES_PGSHIFT,
+		(unsigned long)LAST_CPUPID_PGSHIFT,
+		(unsigned long)PROTECT_LRU_PGSHIFT);
+#else
 	width = shift - SECTIONS_WIDTH - NODES_WIDTH - ZONES_WIDTH - LAST_CPUPID_SHIFT;
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_widths",
 		"Section %d Node %d Zone %d Lastcpupid %d Flags %d\n",
@@ -91,6 +117,7 @@ void __init mminit_verify_pageflags_layout(void)
 		(unsigned long)NODES_PGSHIFT,
 		(unsigned long)ZONES_PGSHIFT,
 		(unsigned long)LAST_CPUPID_PGSHIFT);
+#endif
 	mminit_dprintk(MMINIT_TRACE, "pageflags_layout_nodezoneid",
 		"Node/Zone ID: %lu -> %lu\n",
 		(unsigned long)(ZONEID_PGOFF + ZONEID_SHIFT),

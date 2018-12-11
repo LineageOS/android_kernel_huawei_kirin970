@@ -25,7 +25,7 @@
 #define CLK_SET_PARENT_GATE	BIT(1) /* must be gated across re-parent */
 #define CLK_SET_RATE_PARENT	BIT(2) /* propagate rate change up one level */
 #define CLK_IGNORE_UNUSED	BIT(3) /* do not gate even if unused */
-				/* unused */
+#define CLK_IS_ROOT		BIT(4) /* root clk, has no parent */
 #define CLK_IS_BASIC		BIT(5) /* Basic clk, can't do a to_clk_foo() */
 #define CLK_GET_RATE_NOCACHE	BIT(6) /* do not use the cached clk rate */
 #define CLK_SET_RATE_NO_REPARENT BIT(7) /* don't re-parent on rate change */
@@ -36,10 +36,62 @@
 /* parents need enable during gate/ungate, set rate and re-parent */
 #define CLK_OPS_PARENT_ENABLE	BIT(12)
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+#define DUMP_CLKBUFF_MAX_SIZE 1024
+#endif
+
 struct clk;
 struct clk_hw;
 struct clk_core;
 struct dentry;
+
+/***    private data structures    ***/
+
+struct clk_core {
+	const char		*name;
+	const struct clk_ops	*ops;
+	struct clk_hw		*hw;
+	struct module		*owner;
+	struct clk_core		*parent;
+	const char		**parent_names;
+	struct clk_core		**parents;
+	u8			num_parents;
+	u8			new_parent_index;
+	unsigned long		rate;
+	unsigned long		req_rate;
+	unsigned long		new_rate;
+	struct clk_core		*new_parent;
+	struct clk_core		*new_child;
+	unsigned long		flags;
+	bool			orphan;
+	unsigned int		enable_count;
+	unsigned int		prepare_count;
+	unsigned long		min_rate;
+	unsigned long		max_rate;
+	unsigned long		accuracy;
+	int			phase;
+	struct hlist_head	children;
+	struct hlist_node	child_node;
+	struct hlist_head	clks;
+	unsigned int		notifier_count;
+#ifdef CONFIG_HISI_CLK_DEBUG
+	struct list_head    node;
+#endif
+#ifdef CONFIG_DEBUG_FS
+	struct dentry		*dentry;
+	struct hlist_node	debug_node;
+#endif
+	struct kref		ref;
+};
+
+struct clk {
+	struct clk_core	*core;
+	const char *dev_id;
+	const char *con_id;
+	unsigned long min_rate;
+	unsigned long max_rate;
+	struct hlist_node clks_node;
+};
 
 /**
  * struct clk_rate_request - Structure encoding the clk constraints that
@@ -197,6 +249,15 @@ struct clk_ops {
 	int		(*enable)(struct clk_hw *hw);
 	void		(*disable)(struct clk_hw *hw);
 	int		(*is_enabled)(struct clk_hw *hw);
+#ifdef CONFIG_HISI_CLK_DEBUG
+	int		(*check_selreg)(struct clk_hw *hw);
+	int		(*check_divreg)(struct clk_hw *hw);
+	void __iomem *(*get_reg)(struct clk_hw *hw);
+	int		(*dump_reg)(struct clk_hw *hw, char* buf);
+#endif
+#ifdef CONFIG_HISI_CLK
+	int     (*get_source)(struct clk_hw *hw);
+#endif
 	void		(*disable_unused)(struct clk_hw *hw);
 	unsigned long	(*recalc_rate)(struct clk_hw *hw,
 					unsigned long parent_rate);
@@ -727,6 +788,11 @@ void clk_hw_unregister(struct clk_hw *hw);
 void devm_clk_hw_unregister(struct device *dev, struct clk_hw *hw);
 
 /* helper functions */
+unsigned long __clk_get_rate(struct clk *clk);
+void __clk_disable(struct clk *clk);
+int __clk_enable(struct clk *clk);
+struct clk *__clk_get_parent(struct clk *clk);
+unsigned long __clk_round_rate(struct clk *clk, unsigned long rate);
 const char *__clk_get_name(const struct clk *clk);
 const char *clk_hw_get_name(const struct clk_hw *hw);
 struct clk_hw *__clk_get_hw(struct clk *clk);

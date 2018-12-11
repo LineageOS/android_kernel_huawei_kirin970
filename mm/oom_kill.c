@@ -44,6 +44,9 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
+#ifdef  CONFIG_LOG_JANK
+#include <huawei_platform/log/log_jank.h>
+#endif
 
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
@@ -216,7 +219,7 @@ unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,
 	 * Never return 0 for an eligible task regardless of the root bonus and
 	 * oom_score_adj (oom_score_adj can't be OOM_SCORE_ADJ_MIN here).
 	 */
-	return points > 0 ? points : 1;
+	return points > 0 ? points : 1;/*[false alarm]*/
 }
 
 enum oom_constraint {
@@ -273,7 +276,7 @@ static enum oom_constraint constrained_alloc(struct oom_control *oc)
 
 	/* Check this allocation failure is caused by cpuset's wall function */
 	for_each_zone_zonelist_nodemask(zone, z, oc->zonelist,
-			high_zoneidx, oc->nodemask)
+			high_zoneidx, oc->nodemask)/*lint !e564*/
 		if (!cpuset_zone_allowed(zone, oc->gfp_mask))
 			cpuset_limited = true;
 
@@ -333,7 +336,7 @@ next:
 abort:
 	if (oc->chosen)
 		put_task_struct(oc->chosen);
-	oc->chosen = (void *)-1UL;
+	oc->chosen = (void *)-1UL;/*lint !e501*/
 	return 1;
 }
 
@@ -396,7 +399,7 @@ static void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 			atomic_long_read(&task->mm->nr_ptes),
 			mm_nr_pmds(task->mm),
 			get_mm_counter(task->mm, MM_SWAPENTS),
-			task->signal->oom_score_adj, task->comm);
+			task->signal->oom_score_adj, task->comm);/*lint !e1058*/
 		task_unlock(task);
 	}
 	rcu_read_unlock();
@@ -618,7 +621,7 @@ static int oom_reaper(void *unused)
 			oom_reap_task(tsk);
 	}
 
-	return 0;
+	return 0;/*lint !e527*/
 }
 
 static void wake_oom_reaper(struct task_struct *tsk)
@@ -734,7 +737,7 @@ bool oom_killer_disable(signed long timeout)
 	if (mutex_lock_killable(&oom_lock))
 		return false;
 	oom_killer_disabled = true;
-	mutex_unlock(&oom_lock);
+	mutex_unlock(&oom_lock);/*lint !e455*/
 
 	ret = wait_event_interruptible_timeout(oom_victims_wait,
 			!atomic_read(&oom_victims), timeout);
@@ -902,6 +905,11 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	 */
 	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, true);
 	mark_oom_victim(victim);
+#ifdef  CONFIG_LOG_JANK
+	LOG_JANK_D(JLID_KERNEL_OOM,"#ARG1:<%s>#ARG2:<%d>",
+		victim->comm,
+		task_pid_nr(victim));
+#endif
 	pr_err("Killed process %d (%s) total-vm:%lukB, anon-rss:%lukB, file-rss:%lukB, shmem-rss:%lukB\n",
 		task_pid_nr(victim), victim->comm, K(victim->mm->total_vm),
 		K(get_mm_counter(victim->mm, MM_ANONPAGES)),
@@ -1057,7 +1065,7 @@ bool out_of_memory(struct oom_control *oc)
 		dump_header(oc, NULL);
 		panic("Out of memory and no killable processes...\n");
 	}
-	if (oc->chosen && oc->chosen != (void *)-1UL) {
+	if (oc->chosen && oc->chosen != (void *)-1UL) {/*lint !e501*/
 		oom_kill_process(oc, !is_memcg_oom(oc) ? "Out of memory" :
 				 "Memory cgroup out of memory");
 		/*
@@ -1090,5 +1098,5 @@ void pagefault_out_of_memory(void)
 	if (!mutex_trylock(&oom_lock))
 		return;
 	out_of_memory(&oc);
-	mutex_unlock(&oom_lock);
+	mutex_unlock(&oom_lock);/*lint !e455*/
 }

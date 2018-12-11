@@ -334,14 +334,7 @@ extern u32 audit_sig_sid;
 extern int audit_filter(int msgtype, unsigned int listtype);
 
 #ifdef CONFIG_AUDITSYSCALL
-extern int __audit_signal_info(int sig, struct task_struct *t);
-static inline int audit_signal_info(int sig, struct task_struct *t)
-{
-	if (unlikely((audit_pid && t->tgid == audit_pid) ||
-		     (audit_signals && !audit_dummy_context())))
-		return __audit_signal_info(sig, t);
-	return 0;
-}
+extern int audit_signal_info(int sig, struct task_struct *t);
 extern void audit_filter_inodes(struct task_struct *, struct audit_context *);
 extern struct list_head *audit_killed_trees(void);
 #else

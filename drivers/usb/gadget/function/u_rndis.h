@@ -23,6 +23,7 @@ struct f_rndis_opts {
 	u32				vendor_id;
 	const char			*manufacturer;
 	struct net_device		*net;
+	struct device			dev;
 	bool				bound;
 	bool				borrowed_net;
 

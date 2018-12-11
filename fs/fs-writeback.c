@@ -29,6 +29,7 @@
 #include <linux/device.h>
 #include <linux/memcontrol.h>
 #include "internal.h"
+#include <linux/hisi/pagecache_debug.h>
 
 /*
  * 4MB minimal write chunk size
@@ -1502,10 +1503,19 @@ static long writeback_sb_inodes(struct super_block *sb,
 		.range_cyclic		= work->range_cyclic,
 		.range_start		= 0,
 		.range_end		= LLONG_MAX,
+		.for_free_mem		= 0,
 	};
 	unsigned long start_time = jiffies;
 	long write_chunk;
 	long wrote = 0;  /* count both pages and inodes */
+
+#ifdef CONFIG_HISI_PAGECACHE_HELPER
+	if (work->reason == WB_REASON_FREE_MORE_MEM ||
+	    work->reason == WB_REASON_TRY_TO_FREE_PAGES)
+		wbc.for_free_mem = 1;
+#endif
+
+	task_set_in_wb_thrd(current);
 
 	while (!list_empty(&wb->b_io)) {
 		struct inode *inode = wb_inode(wb->b_io.prev);
@@ -1628,6 +1638,15 @@ static long writeback_sb_inodes(struct super_block *sb,
 				break;
 		}
 	}
+
+	task_clear_in_wb_thrd(current);
+#ifdef CONFIG_F2FS_JOURNAL_APPEND
+	if (sb->s_op->flush_mbio) {
+		spin_unlock(&wb->list_lock);
+		sb->s_op->flush_mbio(sb);
+		spin_lock(&wb->list_lock);
+	}
+#endif
 	return wrote;
 }
 
@@ -1754,6 +1773,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 			oldest_jif = jiffies;
 
 		trace_writeback_start(wb, work);
+		pgcache_log(BIT_WRITEBACK_DUMP,	"writeback start");
 		if (list_empty(&wb->b_io))
 			queue_io(wb, work);
 		if (work->sb)
@@ -1929,6 +1949,10 @@ void wb_workfn(struct work_struct *work)
 		do {
 			pages_written = wb_do_writeback(wb);
 			trace_writeback_pages_written(pages_written);
+			if(is_pagecache_stats_enable()) {
+				stat_inc_wb_count();
+				stat_inc_wb_pages_count(pages_written);
+			}
 		} while (!list_empty(&wb->work_list));
 	} else {
 		/*
@@ -1939,10 +1963,14 @@ void wb_workfn(struct work_struct *work)
 		pages_written = writeback_inodes_wb(wb, 1024,
 						    WB_REASON_FORKER_THREAD);
 		trace_writeback_pages_written(pages_written);
+		if(is_pagecache_stats_enable()) {
+			stat_inc_wb_count();
+			stat_inc_wb_pages_count(pages_written);
+		}
 	}
 
 	if (!list_empty(&wb->work_list))
-		mod_delayed_work(bdi_wq, &wb->dwork, 0);
+		wb_wakeup(wb);
 	else if (wb_has_dirty_io(wb) && dirty_writeback_interval)
 		wb_wakeup_delayed(wb);
 

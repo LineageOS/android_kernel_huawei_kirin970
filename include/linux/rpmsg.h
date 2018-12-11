@@ -141,6 +141,10 @@ struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_device *,
 					rpmsg_rx_cb_t cb, void *priv,
 					struct rpmsg_channel_info chinfo);
 
+int rpmsg_send_offchannel_raw(struct rpmsg_device *rpdev,
+                     u32 src, u32 dst,
+                     void *data, int len, bool wait);
+
 /* use a macro to avoid include chaining to get THIS_MODULE */
 #define register_rpmsg_driver(drv) \
 	__register_rpmsg_driver(drv, THIS_MODULE)

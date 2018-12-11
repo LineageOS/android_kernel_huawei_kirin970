@@ -68,7 +68,7 @@
  * A single 'zspage' is composed of up to 2^N discontiguous 0-order (single)
  * pages. ZS_MAX_ZSPAGE_ORDER defines upper limit on N.
  */
-#define ZS_MAX_ZSPAGE_ORDER 2
+#define ZS_MAX_ZSPAGE_ORDER 3
 #define ZS_MAX_PAGES_PER_ZSPAGE (_AC(1, UL) << ZS_MAX_ZSPAGE_ORDER)
 
 #define ZS_HANDLE_SIZE (sizeof(unsigned long))
@@ -250,7 +250,7 @@ struct zs_pool {
 
 	atomic_long_t pages_allocated;
 
-	struct zs_pool_stats stats;
+	struct zpool_stats stats;
 
 	/* Compact classes */
 	struct shrinker shrinker;
@@ -444,6 +444,21 @@ static void zs_zpool_unmap(void *pool, unsigned long handle)
 	zs_unmap_object(pool, handle);
 }
 
+static int zs_zpool_compact(void *pool, unsigned long *compacted)
+{
+	unsigned long c = zs_compact(pool);
+
+	if (compacted)
+		*compacted = c;
+	return 0;
+}
+
+
+static void zs_zpool_stats(void *pool, struct zpool_stats *stats)
+{
+	zs_pool_stats(pool, stats);
+}
+
 static u64 zs_zpool_total_size(void *pool)
 {
 	return zs_get_total_pages(pool) << PAGE_SHIFT;
@@ -459,6 +474,8 @@ static struct zpool_driver zs_zpool_driver = {
 	.shrink =	zs_zpool_shrink,
 	.map =		zs_zpool_map,
 	.unmap =	zs_zpool_unmap,
+	.compact =	zs_zpool_compact,
+	.stats =	zs_zpool_stats,
 	.total_size =	zs_zpool_total_size,
 };
 
@@ -1968,6 +1985,9 @@ bool zs_page_isolate(struct page *page, isolate_mode_t mode)
 	struct zspage *zspage;
 	struct address_space *mapping;
 
+#ifndef CONFIG_ZS_COMPACTION
+	return false;
+#endif
 	/*
 	 * Page is locked so zspage couldn't be destroyed. For detail, look at
 	 * lock_zspage in free_zspage.
@@ -2323,9 +2343,9 @@ unsigned long zs_compact(struct zs_pool *pool)
 }
 EXPORT_SYMBOL_GPL(zs_compact);
 
-void zs_pool_stats(struct zs_pool *pool, struct zs_pool_stats *stats)
+void zs_pool_stats(struct zs_pool *pool, struct zpool_stats *stats)
 {
-	memcpy(stats, &pool->stats, sizeof(struct zs_pool_stats));
+	memcpy(stats, &pool->stats, sizeof(struct zpool_stats));
 }
 EXPORT_SYMBOL_GPL(zs_pool_stats);
 

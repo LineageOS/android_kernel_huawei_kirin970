@@ -84,6 +84,12 @@ static inline struct arch_hw_breakpoint *counter_arch_bp(struct perf_event *bp)
 	return &bp->hw.info;
 }
 
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+extern int arch_has_hw_breakpoint_addr_mask(void);
+#else
+static inline int arch_has_hw_breakpoint_addr_mask(void) { return 0; }
+#endif
+
 #else /* !CONFIG_HAVE_HW_BREAKPOINT */
 
 static inline int __init init_hw_breakpoint(void) { return 0; }

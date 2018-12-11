@@ -469,7 +469,7 @@ static int flock64_to_posix_lock(struct file *filp, struct file_lock *fl,
 	/* POSIX-1996 leaves the case l->l_len < 0 undefined;
 	   POSIX-2001 defines it. */
 	if (l->l_len > 0) {
-		if (l->l_len - 1 > OFFSET_MAX - fl->fl_start)
+		if (l->l_len - 1 >= OFFSET_MAX - fl->fl_start)
 			return -EOVERFLOW;
 		fl->fl_end = fl->fl_start + l->l_len - 1;
 

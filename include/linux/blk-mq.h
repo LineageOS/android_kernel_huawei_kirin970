@@ -55,9 +55,18 @@ struct blk_mq_hw_ctx {
 	unsigned long		poll_success;
 };
 
+#ifdef CONFIG_HISI_BLK
+struct blk_tagset_ops;
+#endif
+
 struct blk_mq_tag_set {
 	unsigned int		*mq_map;
 	struct blk_mq_ops	*ops;
+#ifdef CONFIG_HISI_BLK
+	struct blk_dev_lld lld_func;
+	struct blk_tagset_ops *hisi_tagset_ops;
+	unsigned int 		high_prio_tags;
+#endif
 	unsigned int		nr_hw_queues;
 	unsigned int		queue_depth;	/* max hw supported */
 	unsigned int		reserved_tags;
@@ -142,6 +151,7 @@ enum {
 	BLK_MQ_RQ_QUEUE_OK	= 0,	/* queued fine */
 	BLK_MQ_RQ_QUEUE_BUSY	= 1,	/* requeue IO for later */
 	BLK_MQ_RQ_QUEUE_ERROR	= 2,	/* end IO with error */
+	BLK_MQ_RQ_QUEUE_IDLE_PENDING = 3,
 
 	BLK_MQ_F_SHOULD_MERGE	= 1 << 0,
 	BLK_MQ_F_TAG_SHARED	= 1 << 1,
@@ -184,6 +194,7 @@ bool blk_mq_can_queue(struct blk_mq_hw_ctx *);
 enum {
 	BLK_MQ_REQ_NOWAIT	= (1 << 0), /* return when out of requests */
 	BLK_MQ_REQ_RESERVED	= (1 << 1), /* allocate from reserved pool */
+	BLK_MQ_REQ_PRIO		= (1 << 2), /* allocate from high prior pool */
 };
 
 struct request *blk_mq_alloc_request(struct request_queue *q, int rw,

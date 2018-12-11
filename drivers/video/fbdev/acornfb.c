@@ -247,24 +247,7 @@ static void acornfb_set_timing(struct fb_info *info)
 #endif
 }
 
-/*
- * We have to take note of the VIDC20's 16-bit palette here.
- * The VIDC20 looks up a 16 bit pixel as follows:
- *
- *   bits   111111
- *          5432109876543210
- *   red            ++++++++  (8 bits,  7 to 0)
- *  green       ++++++++      (8 bits, 11 to 4)
- *   blue   ++++++++          (8 bits, 15 to 8)
- *
- * We use a pixel which looks like:
- *
- *   bits   111111
- *          5432109876543210
- *   red               +++++  (5 bits,  4 to  0)
- *  green         +++++       (5 bits,  9 to  5)
- *   blue    +++++            (5 bits, 14 to 10)
- */
+
 static int
 acornfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 		  u_int trans, struct fb_info *info)

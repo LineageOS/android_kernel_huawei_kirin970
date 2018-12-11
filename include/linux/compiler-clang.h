@@ -16,6 +16,16 @@
  */
 #define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
 
+/*
+ * GCC does not warn about unused static inline functions for
+ * -Wunused-function.  This turns out to avoid the need for complex #ifdef
+ * directives.  Suppress the warning in clang as well.
+ */
+#undef inline
+#define inline inline __attribute__((unused)) notrace
+#define randomized_struct_fields_start	struct {
+#define randomized_struct_fields_end	};
+
 #ifdef CONFIG_LTO_CLANG
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
 #define __norecordmcount \
@@ -23,17 +33,4 @@
 #endif
 
 #define __nocfi		__attribute__((no_sanitize("cfi")))
-#endif
-
-/* all clang versions usable with the kernel support KASAN ABI version 5 */
-#define KASAN_ABI_VERSION 5
-
-/* emulate gcc's __SANITIZE_ADDRESS__ flag */
-#if __has_feature(address_sanitizer)
-#define __SANITIZE_ADDRESS__
-#endif
-
-/* Clang doesn't have a way to turn it off per-function, yet. */
-#ifdef __noretpoline
-#undef __noretpoline
 #endif

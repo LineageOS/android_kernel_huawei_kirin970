@@ -24,7 +24,13 @@
 #ifdef __KERNEL__
 
 struct arch_hw_breakpoint_ctrl {
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	u32 __reserved	: 12,
+	mask	: 5,
+	ssc	: 2,
+#else
 	u32 __reserved	: 19,
+#endif
 	len		: 8,
 	type		: 2,
 	privilege	: 2,
@@ -45,9 +51,13 @@ struct arch_hw_breakpoint {
 
 static inline u32 encode_ctrl_reg(struct arch_hw_breakpoint_ctrl ctrl)
 {
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	u32 val = (ctrl.mask << 24) | (ctrl.ssc << 14) | (ctrl.len << 5) |
+		(ctrl.type << 3) | (ctrl.privilege << 1) | ctrl.enabled;
+#else
 	u32 val = (ctrl.len << 5) | (ctrl.type << 3) | (ctrl.privilege << 1) |
 		ctrl.enabled;
-
+#endif
 	if (is_kernel_in_hyp_mode() && ctrl.privilege == AARCH64_BREAKPOINT_EL1)
 		val |= DBG_HMC_HYP;
 
@@ -64,6 +74,12 @@ static inline void decode_ctrl_reg(u32 reg,
 	ctrl->type	= reg & 0x3;
 	reg >>= 2;
 	ctrl->len	= reg & 0xff;
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	reg >>= 9;
+	ctrl->ssc	= reg & 0x3;
+	reg >>= 10;
+	ctrl->mask	= reg & 0x1f;
+#endif
 }
 
 /* Breakpoint */
@@ -83,6 +99,16 @@ static inline void decode_ctrl_reg(u32 reg,
 #define ARM_BREAKPOINT_LEN_6	0x3f
 #define ARM_BREAKPOINT_LEN_7	0x7f
 #define ARM_BREAKPOINT_LEN_8	0xff
+
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+/* Addr Mask */
+#define ARM_WATCHPOINT_ADDR_MASK_0		0
+#define ARM_WATCHPOINT_ADDR_MASK_3		3
+#define ARM_WATCHPOINT_ADDR_MASK_MAX	31
+
+/* SSC */
+#define ARM_SSC_NON_SECURE	1
+#endif
 
 /* Kernel stepping */
 #define ARM_KERNEL_STEP_NONE	0

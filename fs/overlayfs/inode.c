@@ -12,6 +12,7 @@
 #include <linux/xattr.h>
 #include <linux/posix_acl.h>
 #include "overlayfs.h"
+#include <linux/security.h>
 
 static int ovl_copy_up_truncate(struct dentry *dentry)
 {
@@ -34,7 +35,7 @@ static int ovl_copy_up_truncate(struct dentry *dentry)
 		stat.size = 0;
 		err = ovl_copy_up_one(parent, dentry, &lowerpath, &stat);
 	}
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 out_dput_parent:
 	dput(parent);
@@ -91,7 +92,7 @@ int ovl_setattr(struct dentry *dentry, struct iattr *attr)
 		inode_lock(upperdentry->d_inode);
 		old_cred = ovl_override_creds(dentry->d_sb);
 		err = notify_change(upperdentry, attr, NULL);
-		revert_creds(old_cred);
+		ovl_revert_creds(old_cred);
 		if (!err)
 			ovl_copyattr(upperdentry->d_inode, dentry->d_inode);
 		inode_unlock(upperdentry->d_inode);
@@ -115,7 +116,7 @@ static int ovl_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	ovl_path_real(dentry, &realpath);
 	old_cred = ovl_override_creds(dentry->d_sb);
 	err = vfs_getattr(&realpath, stat);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	return err;
 }
 
@@ -147,7 +148,7 @@ int ovl_permission(struct inode *inode, int mask)
 		mask |= MAY_READ;
 	}
 	err = inode_permission(realinode, mask);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return err;
 }
@@ -164,7 +165,7 @@ static const char *ovl_get_link(struct dentry *dentry,
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	p = vfs_get_link(ovl_dentry_real(dentry), done);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	return p;
 }
 
@@ -187,7 +188,7 @@ int ovl_xattr_set(struct dentry *dentry, const char *name, const void *value,
 		goto out;
 
 	if (!value && !OVL_TYPE_UPPER(type)) {
-		err = vfs_getxattr(realpath.dentry, name, NULL, 0);
+		err = vfs_getxattr(NULL, realpath.dentry, name, NULL, 0);
 		if (err < 0)
 			goto out_drop_write;
 	}
@@ -201,12 +202,12 @@ int ovl_xattr_set(struct dentry *dentry, const char *name, const void *value,
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	if (value)
-		err = vfs_setxattr(realpath.dentry, name, value, size, flags);
+		err = vfs_setxattr(NULL, realpath.dentry, name, value, size, flags);
 	else {
 		WARN_ON(flags != XATTR_REPLACE);
-		err = vfs_removexattr(realpath.dentry, name);
+		err = vfs_removexattr(NULL, realpath.dentry, name);
 	}
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 out_drop_write:
 	ovl_drop_write(dentry);
@@ -222,8 +223,8 @@ int ovl_xattr_get(struct dentry *dentry, const char *name,
 	const struct cred *old_cred;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
-	res = vfs_getxattr(realdentry, name, value, size);
-	revert_creds(old_cred);
+	res = vfs_getxattr(NULL, realdentry, name, value, size);
+	ovl_revert_creds(old_cred);
 	return res;
 }
 
@@ -247,7 +248,7 @@ ssize_t ovl_listxattr(struct dentry *dentry, char *list, size_t size)
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	res = vfs_listxattr(realdentry, list, size);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	if (res <= 0 || size == 0)
 		return res;
 
@@ -282,7 +283,7 @@ struct posix_acl *ovl_get_acl(struct inode *inode, int type)
 
 	old_cred = ovl_override_creds(inode->i_sb);
 	acl = get_acl(realinode, type);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return acl;
 }
@@ -363,6 +364,36 @@ static const struct inode_operations ovl_symlink_inode_operations = {
 	.listxattr	= ovl_listxattr,
 	.update_time	= ovl_update_time,
 };
+
+void ovl_copyattr(struct inode *from, struct inode *to)
+{
+#ifdef CONFIG_SECURITY
+	void   *secctx;
+	size_t  ctxlen;
+	int     err = -1;
+
+	err = security_inode_getsecctx(from, &secctx, &ctxlen);
+	if (!err) {
+		/*
+		 * replace the fresh inode_security_struct because it should be
+		 * the same as the real underlying inode.
+		 */
+		err = security_inode_notifysecctx(to, secctx, ctxlen);
+		security_release_secctx(secctx, ctxlen);
+	}
+	if (err)
+		WARN(1, "cannot copy up security context err:%d\n", err);
+
+#endif
+	to->i_uid = from->i_uid;
+	to->i_gid = from->i_gid;
+	to->i_mode = from->i_mode;
+	to->i_atime = from->i_atime;
+	to->i_mtime = from->i_mtime;
+	to->i_ctime = from->i_ctime;
+	//copy the size attribute of lower indoe to merge layer
+	i_size_write(to, i_size_read(from));
+}
 
 static void ovl_fill_inode(struct inode *inode, umode_t mode)
 {

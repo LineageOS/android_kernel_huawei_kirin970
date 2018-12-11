@@ -30,9 +30,11 @@
 #include <linux/audit.h>
 #include <linux/ipv6.h>
 #include <net/ipv6.h>
+#include <chipset_common/hiview_selinux/hiview_selinux.h>
 #include "avc.h"
 #include "avc_ss.h"
 #include "classmap.h"
+#include "objsec.h"
 
 #define AVC_CACHE_SLOTS			512
 #define AVC_DEF_CACHE_THRESHOLD		512
@@ -716,6 +718,10 @@ static void avc_audit_pre_callback(struct audit_buffer *ab, void *a)
 	avc_dump_av(ab, ad->selinux_audit_data->tclass,
 			ad->selinux_audit_data->audited);
 	audit_log_format(ab, " for ");
+
+#ifdef CONFIG_HUAWEI_SELINUX_DSM
+	selinux_dsm_process(ab, a, ad->selinux_audit_data->denied);
+#endif
 }
 
 /**
@@ -737,6 +743,48 @@ static void avc_audit_post_callback(struct audit_buffer *ab, void *a)
 	}
 }
 
+static u32 sdcard_sid = 0;
+
+static u32 get_sdcard_sid(struct common_audit_data *cad)
+{
+	if (cad->type == LSM_AUDIT_DATA_DENTRY &&
+	   (cad->selinux_audit_data->requested & FILESYSTEM__MOUNT)) {
+		char *context;
+		u32 context_len;
+		struct super_block *sb;
+		struct superblock_security_struct *sss;
+		if (cad->u.dentry && cad->u.dentry->d_sb) {
+			sb = cad->u.dentry->d_sb;
+			sss = (struct superblock_security_struct*)sb->s_security;
+			if (sss) {
+				security_sid_to_context(sss->sid, &context, &context_len);
+			}
+			if (strstr(sb->s_type->name, "sdcardfs")) {
+				printk(KERN_WARNING "%s(%d): %s %s!\n", __func__, __LINE__,
+						sb->s_type->name, context);
+				return sss->sid;
+			}
+		}
+	}
+	return 0;
+}
+
+#ifdef CONFIG_HIVIEW_SELINUX
+static int check_class_request(u16 tclass, u32 requested)
+{
+	if (((tclass == SECCLASS_DIR) && /* DIR */
+	    (requested == DIR__SEARCH || requested == DIR__GETATTR ||
+	     requested == DIR__READ || requested == DIR__WRITE)) ||
+	    ((tclass == SECCLASS_FILE) && /* FILE */
+	    (requested == FILE__READ || requested == FILE__GETATTR ||
+	     requested == FILE__WRITE)) ||
+	    (tclass == SECCLASS_FILESYSTEM && requested == FILESYSTEM__GETATTR)) {
+		return 1;
+	}
+	return 0;
+}
+#endif
+
 /* This is the slow part of avc audit with big stack footprint */
 noinline int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
 		u32 requested, u32 audited, u32 denied, int result,
@@ -745,6 +793,7 @@ noinline int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
 {
 	struct common_audit_data stack_data;
 	struct selinux_audit_data sad;
+	int ret = 0;
 
 	if (!a) {
 		a = &stack_data;
@@ -772,7 +821,25 @@ noinline int slow_avc_audit(u32 ssid, u32 tsid, u16 tclass,
 
 	a->selinux_audit_data = &sad;
 
-	common_lsm_audit(a, avc_audit_pre_callback, avc_audit_post_callback);
+	// get sdcard_sid
+	if (!sdcard_sid && a->selinux_audit_data->tclass== SECCLASS_FILESYSTEM)
+		sdcard_sid = get_sdcard_sid(a);
+
+#ifdef CONFIG_HIVIEW_SELINUX
+	if ((sdcard_sid && (tsid == sdcard_sid)) ||
+	     a->selinux_audit_data->tclass== SECCLASS_FILESYSTEM) {
+		//check tclass & requested
+		ret = check_class_request(tclass, requested);
+		if (ret == 0)
+			ret = hw_hiview_selinux_avc_audit(a);
+	}
+#else
+	if (sdcard_sid && (tsid == sdcard_sid))
+		ret = 1;
+#endif
+	if (ret == 0)
+		common_lsm_audit(a, avc_audit_pre_callback, avc_audit_post_callback);
+
 	return 0;
 }
 
@@ -1187,6 +1254,7 @@ void avc_disable(void)
 	 * in an rcu_lock, but seriously, it's not worth it.  Instead I just flush
 	 * the cache and get that memory back.
 	 */
+
 	if (avc_node_cachep) {
 		avc_flush();
 		/* kmem_cache_destroy(avc_node_cachep); */

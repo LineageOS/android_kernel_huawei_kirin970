@@ -65,7 +65,7 @@ void scsi_eh_wakeup(struct Scsi_Host *shost)
 	if (atomic_read(&shost->host_busy) == shost->host_failed) {
 		trace_scsi_eh_wakeup(shost);
 		wake_up_process(shost->ehandler);
-		SCSI_LOG_ERROR_RECOVERY(5, shost_printk(KERN_INFO, shost,
+		SCSI_LOG_ERROR_RECOVERY(3, shost_printk(KERN_INFO, shost,
 			"Waking error handler thread\n"));
 	}
 }
@@ -441,6 +441,22 @@ static void scsi_report_sense(struct scsi_device *sdev,
 	}
 }
 
+/*enable samsung UFS ffu link lost recovery solution on kirin*/
+#define FEATURE_SAMSUNG_FFU_LINK_LOST_RECOVERY
+
+/* define sense data value of samsung UFS link lost status after ffu */
+#ifdef FEATURE_SAMSUNG_FFU_LINK_LOST_RECOVERY
+
+#define UFS_VENDOR_STRING_SAMSUNG "SAMSUNG"
+#define SAMSUNG_FFU_LINK_LOST_ASC_VALUE     0x80
+#define SAMSUNG_FFU_LINK_LOST_ASCQ_VALUE    0x09
+
+#ifndef UFSHCD
+#define UFSHCD "ufshcd"
+#endif
+
+#endif
+
 /**
  * scsi_check_sense - Examine scsi cmd sense
  * @scmd:	Cmd to have sense checked.
@@ -584,9 +600,17 @@ int scsi_check_sense(struct scsi_cmnd *scmd)
 		return NEEDS_RETRY;
 
 	case HARDWARE_ERROR:
-		if (scmd->device->retry_hwerror)
+		if (sshdr.asc == 0x1 &&
+			sshdr.ascq == 0x0) {/*for hi1861 internel error*/
+			pr_err("%s: hi1861 hwerror\n", __func__);
+			return FAILED;
+		}
+		if (scmd->device->retry_hwerror) {
 			return ADD_TO_MLQUEUE;
-		else
+		} else if(scmd->device->reset_hwerror) {
+			pr_err("%s: reset hwerror\n", __func__);
+			return FAILED;
+		} else
 			set_host_byte(scmd, DID_TARGET_FAILURE);
 
 	case ILLEGAL_REQUEST:
@@ -596,6 +620,23 @@ int scsi_check_sense(struct scsi_cmnd *scmd)
 		    sshdr.asc == 0x26) { /* Parameter value invalid */
 			set_host_byte(scmd, DID_TARGET_FAILURE);
 		}
+
+#ifdef FEATURE_SAMSUNG_FFU_LINK_LOST_RECOVERY
+		if( (sdev->type == TYPE_DISK)
+			&& (sshdr.asc == SAMSUNG_FFU_LINK_LOST_ASC_VALUE)
+			&& (sshdr.ascq == SAMSUNG_FFU_LINK_LOST_ASCQ_VALUE)
+			&& (NULL != sdev->vendor)
+			&& !strncmp(sdev->vendor,UFS_VENDOR_STRING_SAMSUNG,strlen(UFS_VENDOR_STRING_SAMSUNG))
+			&& (NULL != sdev->host)
+			&& (NULL != sdev->host->hostt)
+			&& (NULL != sdev->host->hostt->name)
+			&& !strncmp(sdev->host->hostt->name,UFSHCD,strlen(UFSHCD)) )
+		{
+			SCSI_LOG_ERROR_RECOVERY(3,sdev_printk(KERN_INFO, sdev,"%s: UFS FFU LINK LOST SAMSUNG return FAILED and scsi retry.\n",current->comm));
+			return FAILED;
+		}
+#endif
+
 		return SUCCESS;
 
 	default:
@@ -1293,6 +1334,10 @@ static int scsi_eh_test_devices(struct list_head *cmd_list,
 			 !scsi_eh_tur(scmd)) ||
 			!scsi_eh_tur(scmd);
 
+		SCSI_LOG_ERROR_RECOVERY(3,
+			sdev_printk(KERN_INFO, sdev, "%s: , finish_cmds: %d\n",
+				current->comm, finish_cmds));
+
 		list_for_each_entry_safe(scmd, next, cmd_list, eh_entry)
 			if (scmd->device == sdev) {
 				if (finish_cmds &&
@@ -1382,6 +1427,8 @@ static int scsi_eh_try_stu(struct scsi_cmnd *scmd)
 			return 0;
 	}
 
+	SCSI_LOG_ERROR_RECOVERY(3,
+		scmd_printk(KERN_INFO, scmd, "%s return: 1\n", current->comm));
 	return 1;
 }
 
@@ -2172,6 +2219,11 @@ static void scsi_unjam_host(struct Scsi_Host *shost)
 int scsi_error_handler(void *data)
 {
 	struct Scsi_Host *shost = data;
+	struct sched_param scheduler_params = {0};
+
+	scheduler_params.sched_priority = 1;
+
+	sched_setscheduler(current, SCHED_FIFO, &scheduler_params);
 
 	/*
 	 * We use TASK_INTERRUPTIBLE so that the thread is not
@@ -2192,7 +2244,7 @@ int scsi_error_handler(void *data)
 
 		if ((shost->host_failed == 0 && shost->host_eh_scheduled == 0) ||
 		    shost->host_failed != atomic_read(&shost->host_busy)) {
-			SCSI_LOG_ERROR_RECOVERY(1,
+		        SCSI_LOG_ERROR_RECOVERY(1,
 				shost_printk(KERN_INFO, shost,
 					     "scsi_eh_%d: sleeping\n",
 					     shost->host_no));
@@ -2334,10 +2386,10 @@ scsi_ioctl_reset(struct scsi_device *dev, int __user *arg)
 	struct request req;
 	unsigned long flags;
 	int error = 0, rtn, val;
-
+#ifndef BYPASS_AUTHORITY_VERIFY
 	if (!capable(CAP_SYS_ADMIN) || !capable(CAP_SYS_RAWIO))
 		return -EACCES;
-
+#endif
 	error = get_user(val, arg);
 	if (error)
 		return error;

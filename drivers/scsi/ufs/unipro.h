@@ -40,6 +40,15 @@
 #define TX_CFGCLKFREQVAL			0x00EC
 #define	CFGEXTRATTR				0x00F0
 #define DITHERCTRL2				0x00F1
+#define MPHY_TX_FSM_STATE			0x0041
+     #define TX_FSM_DISABLED     0x0
+     #define TX_FSM_HIBERN8      0x1
+     #define TX_FSM_SLEEP        0x2
+     #define TX_FSM_STALL        0x3
+     #define TX_FSM_LS_BURST     0x4
+     #define TX_FSM_HS_BURST     0x5
+     #define TX_FSM_LINE_CFG     0x6
+     #define TX_FSM_LINE_RESET   0x7
 
 /*
  * M-RX Configuration Attributes
@@ -119,6 +128,7 @@
 #define PA_PWRMODE		0x1571
 #define PA_RXGEAR		0x1583
 #define PA_RXTERMINATION	0x1584
+#define PA_SCRAMBLING		0x1585
 #define PA_MAXRXPWMGEAR		0x1586
 #define PA_MAXRXHSGEAR		0x1587
 #define PA_RXHSUNTERMCAP	0x15A5
@@ -150,6 +160,11 @@
 #define PA_SLEEPNOCONFIGTIME	0x15A2
 #define PA_STALLNOCONFIGTIME	0x15A3
 #define PA_SAVECONFIGTIME	0x15A4
+#define PA_TXHSADAPTTYPE	0x15D4
+
+/*UFS Device UniPro version*/
+#define UNIPRO_VER_1_6_1	4
+#define UNIPRO_VER_1_8		5
 
 #define PA_TACTIVATE_TIME_UNIT_US	10
 #define PA_HIBERN8_TIME_UNIT_US		100
@@ -196,6 +211,7 @@ enum ufs_hs_gear_tag {
 	UFS_HS_G1,		/* HS Gear 1 (default for reset) */
 	UFS_HS_G2,		/* HS Gear 2 */
 	UFS_HS_G3,		/* HS Gear 3 */
+	UFS_HS_G4,		/* HS Gear 4 */
 };
 
 enum ufs_unipro_ver {
@@ -208,6 +224,12 @@ enum ufs_unipro_ver {
 	UFS_UNIPRO_VER_MASK = 0xF,
 };
 
+enum {
+	PA_HS_APT_REFRESH,	/* REFRESH */
+	PA_HS_APT_INITIAL,	/* INITIAL */
+	PA_HS_APT_RESERVED,	/* Reserved */
+	PA_HS_APT_NO,		/* No ADAPT */
+};
 /*
  * Data Link Layer Attributes
  */
@@ -260,6 +282,8 @@ enum ufs_unipro_ver {
 #define T_PEERBUFFERSPACE	0x4029
 #define T_CREDITSTOSEND		0x402A
 #define T_CPORTMODE		0x402B
+  #define CPORT_APPLICATION 1
+  #define CPORT_UNDER_TEST  2
 #define T_TC0TXMAXSDUSIZE	0x4060
 #define T_TC1TXMAXSDUSIZE	0x4061
 
@@ -270,6 +294,21 @@ enum ufs_unipro_ver {
 #ifdef TRUE
 #undef TRUE
 #endif
+
+/* CPort setting */
+#define E2EFC_ON	(1 << 0)
+#define E2EFC_OFF	(0 << 0)
+#define CSD_N_ON	(0 << 1)
+#define CSD_N_OFF	(1 << 1)
+#define CSV_N_ON	(0 << 2)
+#define CSV_N_OFF	(1 << 2)
+#define CPORT_DEF_FLAGS	(CSV_N_OFF | CSD_N_OFF | E2EFC_OFF)
+
+/* CPort connection state */
+enum {
+	CPORT_IDLE = 0,
+	CPORT_CONNECTED,
+};
 
 /* Boolean attribute values */
 enum {

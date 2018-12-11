@@ -195,6 +195,16 @@ static void zbud_zpool_unmap(void *pool, unsigned long handle)
 	zbud_unmap(pool, handle);
 }
 
+static int zbud_zpool_compact(void *pool, unsigned long *compacted)
+{
+	return -EINVAL;
+}
+
+static void zbud_zpool_stats(void *pool, struct zpool_stats *stats)
+{
+	/* no-op */
+}
+
 static u64 zbud_zpool_total_size(void *pool)
 {
 	return zbud_get_pool_size(pool) * PAGE_SIZE;
@@ -210,6 +220,8 @@ static struct zpool_driver zbud_zpool_driver = {
 	.shrink =	zbud_zpool_shrink,
 	.map =		zbud_zpool_map,
 	.unmap =	zbud_zpool_unmap,
+	.compact =	zbud_zpool_compact,
+	.stats =	zbud_zpool_stats,
 	.total_size =	zbud_zpool_total_size,
 };
 
@@ -307,7 +319,7 @@ struct zbud_pool *zbud_create_pool(gfp_t gfp, const struct zbud_ops *ops)
 	struct zbud_pool *pool;
 	int i;
 
-	pool = kzalloc(sizeof(struct zbud_pool), gfp);
+	pool = kzalloc(sizeof(struct zbud_pool), GFP_KERNEL);
 	if (!pool)
 		return NULL;
 	spin_lock_init(&pool->lock);

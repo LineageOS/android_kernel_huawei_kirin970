@@ -744,7 +744,7 @@ xfs_buf_readahead_map(
 	int			nmaps,
 	const struct xfs_buf_ops *ops)
 {
-	if (bdi_read_congested(target->bt_bdi))
+	if (bdi_read_congested(target->bt_bdev->bd_bdi))
 		return;
 
 	xfs_buf_read_map(target, map, nmaps,
@@ -1782,30 +1782,24 @@ xfs_alloc_buftarg(
 	btp->bt_mount = mp;
 	btp->bt_dev =  bdev->bd_dev;
 	btp->bt_bdev = bdev;
-	btp->bt_bdi = blk_get_backing_dev_info(bdev);
 
 	if (xfs_setsize_buftarg_early(btp, bdev))
-		goto error_free;
+		goto error;
 
 	if (list_lru_init(&btp->bt_lru))
-		goto error_free;
+		goto error;
 
 	if (percpu_counter_init(&btp->bt_io_count, 0, GFP_KERNEL))
-		goto error_lru;
+		goto error;
 
 	btp->bt_shrinker.count_objects = xfs_buftarg_shrink_count;
 	btp->bt_shrinker.scan_objects = xfs_buftarg_shrink_scan;
 	btp->bt_shrinker.seeks = DEFAULT_SEEKS;
 	btp->bt_shrinker.flags = SHRINKER_NUMA_AWARE;
-	if (register_shrinker(&btp->bt_shrinker))
-		goto error_pcpu;
+	register_shrinker(&btp->bt_shrinker);
 	return btp;
 
-error_pcpu:
-	percpu_counter_destroy(&btp->bt_io_count);
-error_lru:
-	list_lru_destroy(&btp->bt_lru);
-error_free:
+error:
 	kmem_free(btp);
 	return NULL;
 }

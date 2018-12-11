@@ -81,3 +81,5 @@ obj-y				+= l3mdev/
 endif
 obj-$(CONFIG_QRTR)		+= qrtr/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
+obj-$(CONFIG_NET)		+= hwnet/
+obj-$(CONFIG_HW_NETWORK_AWARE)  += network_aware/

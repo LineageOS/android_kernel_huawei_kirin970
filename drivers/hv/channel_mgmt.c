@@ -70,7 +70,7 @@ static const struct vmbus_device vmbus_devs[] = {
 	/* PCIE */
 	{ .dev_type = HV_PCIE,
 	  HV_PCIE_GUID,
-	  .perf_device = false,
+	  .perf_device = true,
 	},
 
 	/* Synthetic Frame Buffer */

@@ -13,13 +13,20 @@ $(obj)/system_certificates.o: $(obj)/x509_certificate_list
 
 # Cope with signing_key.x509 existing in $(srctree) not $(objtree)
 AFLAGS_system_certificates.o := -I$(srctree)
-
+ifneq ($(CONFIG_MODULE_SIG_KEY),"huawei_signing_key.pem")
 quiet_cmd_extract_certs  = EXTRACT_CERTS   $(patsubst "%",%,$(2))
       cmd_extract_certs  = scripts/extract-cert $(2) $@ || ( rm $@; exit 1)
 
 targets += x509_certificate_list
 $(obj)/x509_certificate_list: scripts/extract-cert $(SYSTEM_TRUSTED_KEYS_SRCPREFIX)$(SYSTEM_TRUSTED_KEYS_FILENAME) FORCE
 	$(call if_changed,extract_certs,$(SYSTEM_TRUSTED_KEYS_SRCPREFIX)$(CONFIG_SYSTEM_TRUSTED_KEYS))
+else
+quiet_cmd_extract_certs  = EXTRACT_CERTS   $(patsubst "%",%,$(2))
+      cmd_extract_certs  =  $(srctree)/../../build/tools/signkernel/extract-cert $(2) $@ || ( rm $@; exit 1)
+targets += x509_certificate_list
+$(obj)/x509_certificate_list: $(srctree)/../../build/tools/signkernel/extract-cert $(SYSTEM_TRUSTED_KEYS_SRCPREFIX)$(SYSTEM_TRUSTED_KEYS_FILENAME) FORCE
+	$(call if_changed,extract_certs,$(SYSTEM_TRUSTED_KEYS_SRCPREFIX)$(CONFIG_SYSTEM_TRUSTED_KEYS))
+endif
 endif
 
 clean-files := x509_certificate_list .x509.list
@@ -94,6 +101,11 @@ endif
 $(obj)/system_certificates.o: $(obj)/signing_key.x509
 
 targets += signing_key.x509
+ifneq ($(CONFIG_MODULE_SIG_KEY),"huawei_signing_key.pem")
 $(obj)/signing_key.x509: scripts/extract-cert $(X509_DEP) FORCE
 	$(call if_changed,extract_certs,$(MODULE_SIG_KEY_SRCPREFIX)$(CONFIG_MODULE_SIG_KEY))
+else
+$(obj)/signing_key.x509:
+	cp -fp $(srctree)/../../build/tools/signkernel/signing_key.x509 $(obj)/signing_key.x509
+endif
 endif

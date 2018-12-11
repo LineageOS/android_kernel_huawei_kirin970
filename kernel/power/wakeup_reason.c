@@ -41,6 +41,35 @@ static ktime_t curr_monotime; /* monotonic time after last suspend */
 static ktime_t last_stime; /* monotonic boottime offset before last suspend */
 static ktime_t curr_stime; /* monotonic boottime offset after last suspend */
 
+#ifdef CONFIG_HISI_SR
+#define IRQ_NAME_LEN	(128UL)
+extern const char **g_ap_irq_name;
+
+static ssize_t last_resume_reason_show(struct kobject *kobj, struct kobj_attribute *attr,
+		char *buf)
+{
+	int irq_no, buf_offset = 0;
+	char irq_name[IRQ_NAME_LEN] = {0};
+
+	spin_lock(&resume_reason_lock);
+	if (suspend_abort) {
+		buf_offset = sprintf(buf, "Abort: %s", abort_reason);
+	} else {
+		for (irq_no = 0; irq_no < irqcount; irq_no++) {
+			if (g_ap_irq_name && g_ap_irq_name[irq_list[irq_no]]) {
+				strncpy(irq_name, g_ap_irq_name[irq_list[irq_no]], (IRQ_NAME_LEN - 1));
+				buf_offset += snprintf(buf + buf_offset, IRQ_NAME_LEN,
+						"%d %s\n", irq_list[irq_no], irq_name);
+			} else {
+				buf_offset += sprintf(buf + buf_offset, "%d\n",
+						irq_list[irq_no]);
+			}
+		}
+	}
+	spin_unlock(&resume_reason_lock);
+	return buf_offset;
+}
+#else
 static ssize_t last_resume_reason_show(struct kobject *kobj, struct kobj_attribute *attr,
 		char *buf)
 {
@@ -63,6 +92,7 @@ static ssize_t last_resume_reason_show(struct kobject *kobj, struct kobj_attribu
 	spin_unlock(&resume_reason_lock);
 	return buf_offset;
 }
+#endif
 
 static ssize_t last_suspend_time_show(struct kobject *kobj,
 			struct kobj_attribute *attr, char *buf)

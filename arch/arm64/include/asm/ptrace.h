@@ -118,7 +118,8 @@ struct pt_regs {
 	u64 orig_x0;
 	u64 syscallno;
 	u64 orig_addr_limit;
-	u64 unused;	// maintain 16 byte alignment
+	u32 orig_addr_limit_hkip[2];
+	// maintain 16 byte alignment
 };
 
 #define MAX_REG_OFFSET offsetof(struct pt_regs, pstate)
@@ -219,6 +220,15 @@ int valid_user_regs(struct user_pt_regs *regs, struct task_struct *task);
 
 #undef profile_pc
 extern unsigned long profile_pc(struct pt_regs *regs);
+
+
+#ifdef CONFIG_HISI_BB
+/*
+ * Get pt_regs info in handling exception.
+ * @regs: where to store pt_regs info
+ */
+extern void get_pt_regs(struct pt_regs *regs);
+#endif
 
 #endif /* __ASSEMBLY__ */
 #endif

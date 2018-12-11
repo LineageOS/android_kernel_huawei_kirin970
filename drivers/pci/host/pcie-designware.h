@@ -63,7 +63,11 @@ struct pcie_host_ops {
 	int (*wr_other_conf)(struct pcie_port *pp, struct pci_bus *bus,
 			unsigned int devfn, int where, int size, u32 val);
 	int (*link_up)(struct pcie_port *pp);
+#ifdef CONFIG_PCIE_KIRIN
+	int (*host_init)(struct pcie_port *pp);
+#else
 	void (*host_init)(struct pcie_port *pp);
+#endif
 	void (*msi_set_irq)(struct pcie_port *pp, int irq);
 	void (*msi_clear_irq)(struct pcie_port *pp, int irq);
 	phys_addr_t (*get_msi_addr)(struct pcie_port *pp);

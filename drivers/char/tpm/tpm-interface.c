@@ -402,7 +402,6 @@ out:
 	return rc;
 }
 
-#define TPM_DIGEST_SIZE 20
 #define TPM_RET_CODE_IDX 6
 
 ssize_t tpm_transmit_cmd(struct tpm_chip *chip, const void *cmd,
@@ -1078,11 +1077,6 @@ int tpm_get_random(u32 chip_num, u8 *out, size_t max)
 			break;
 
 		recd = be32_to_cpu(tpm_cmd.params.getrandom_out.rng_data_len);
-		if (recd > num_bytes) {
-			total = -EFAULT;
-			break;
-		}
-
 		memcpy(dest, tpm_cmd.params.getrandom_out.rng_data, recd);
 
 		dest += recd;

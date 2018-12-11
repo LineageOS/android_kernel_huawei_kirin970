@@ -354,13 +354,28 @@ static void pcs_pin_dbg_show(struct pinctrl_dev *pctldev,
 {
 	struct pcs_device *pcs;
 	unsigned val, mux_bytes;
-
+#if defined CONFIG_HISI_PINCRTL_INFO
+	struct pcs_gpiofunc_range *frange = NULL;
+	struct list_head *pos, *tmp;
+#endif
 	pcs = pinctrl_dev_get_drvdata(pctldev);
-
+#if defined CONFIG_HISI_PINCRTL_INFO
+	list_for_each_safe(pos, tmp, &pcs->gpiofuncs) {
+		frange = list_entry(pos, struct pcs_gpiofunc_range, node); /*lint !e826 */
+		if (pin >= frange->offset + frange->npins
+			|| pin < frange->offset)
+			continue;
+		mux_bytes = pcs->width / BITS_PER_BYTE;
+		val = (unsigned)pcs->read(pcs->base + pin * mux_bytes); /*lint !e124 */
+		seq_printf(s, "%08x %s " , val, DRIVER_NAME);
+		break;
+	}
+#else
 	mux_bytes = pcs->width / BITS_PER_BYTE;
 	val = pcs->read(pcs->base + pin * mux_bytes);
 
 	seq_printf(s, "%08x %s " , val, DRIVER_NAME);
+#endif
 }
 
 static void pcs_dt_free_map(struct pinctrl_dev *pctldev,
@@ -2028,7 +2043,18 @@ static struct platform_driver pcs_driver = {
 #endif
 };
 
-module_platform_driver(pcs_driver);
+static int __init pinctrl_single_init(void)
+{
+	return platform_driver_register(&pcs_driver);
+}
+
+static void __exit pinctrl_single_exit(void)
+{
+	platform_driver_unregister(&pcs_driver);
+}
+
+arch_initcall(pinctrl_single_init);
+module_exit(pinctrl_single_exit);
 
 MODULE_AUTHOR("Tony Lindgren <tony@atomide.com>");
 MODULE_DESCRIPTION("One-register-per-pin type device tree based pinctrl driver");

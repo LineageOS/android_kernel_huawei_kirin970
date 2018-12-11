@@ -84,6 +84,10 @@
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
 
+#ifdef CONFIG_HW_WIFIPRO
+#include <hwnet/ipv4/wifipro_tcp_monitor.h>
+#endif
+
 int sysctl_tcp_tw_reuse __read_mostly;
 int sysctl_tcp_low_latency __read_mostly;
 
@@ -1687,6 +1691,8 @@ process:
 		}
 		if (nsk == sk) {
 			reqsk_put(req);
+		} else if (tcp_filter(sk, skb)) {
+			goto discard_and_relse;
 		} else if (tcp_child_process(sk, nsk, skb)) {
 			tcp_v4_send_reset(nsk, skb);
 			goto discard_and_relse;
@@ -1713,6 +1719,9 @@ process:
 	th = (const struct tcphdr *)skb->data;
 	iph = ip_hdr(skb);
 
+#ifdef CONFIG_TCP_ARGO
+	argo_try_to_init(sk, skb);
+#endif /* CONFIG_TCP_ARGO */
 	skb->dev = NULL;
 
 	if (sk->sk_state == TCP_LISTEN) {
@@ -1725,6 +1734,17 @@ process:
 	bh_lock_sock_nested(sk);
 	tcp_segs_in(tcp_sk(sk), skb);
 	ret = 0;
+
+#ifdef CONFIG_HUAWEI_BASTET
+	if (bastet_sock_recv_prepare(sk, skb)) {
+		bh_unlock_sock(sk);
+		sock_put(sk);
+		return ret;
+	}
+#endif
+#ifdef CONFIG_HW_WIFIPRO
+	wifipro_update_tcp_statistics(WIFIPRO_TCP_MIB_INSEGS, skb, sk);
+#endif
 	if (!sock_owned_by_user(sk)) {
 		if (!tcp_prequeue(sk, skb))
 			ret = tcp_v4_do_rcv(sk, skb);

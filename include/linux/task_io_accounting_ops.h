@@ -94,6 +94,8 @@ static inline void task_chr_io_accounting_add(struct task_io_accounting *dst,
 {
 	dst->rchar += src->rchar;
 	dst->wchar += src->wchar;
+	dst->file_rchar += src->file_rchar;
+	dst->file_wchar += src->file_wchar;
 	dst->syscr += src->syscr;
 	dst->syscw += src->syscw;
 	dst->syscfs += src->syscfs;

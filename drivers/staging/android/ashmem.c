@@ -33,7 +33,11 @@
 #include <linux/mutex.h>
 #include <linux/shmem_fs.h>
 #include "ashmem.h"
-
+#define CREATE_TRACE_POINTS
+#include "trace/ashmem.h"
+#ifdef CONFIG_HW_FDLEAK
+#include <chipset_common/hwfdleak/fdleak.h>
+#endif
 #define ASHMEM_NAME_PREFIX "dev/ashmem/"
 #define ASHMEM_NAME_PREFIX_LEN (sizeof(ASHMEM_NAME_PREFIX) - 1)
 #define ASHMEM_FULL_NAME_LEN (ASHMEM_NAME_LEN + ASHMEM_NAME_PREFIX_LEN)
@@ -57,6 +61,7 @@ struct ashmem_area {
 	struct file *file;
 	size_t size;
 	unsigned long prot_mask;
+	struct mutex lock;
 };
 
 /**
@@ -90,12 +95,12 @@ static LIST_HEAD(ashmem_lru_list);
  */
 static unsigned long lru_count;
 
-/*
- * ashmem_mutex - protects the list of and each individual ashmem_area
+/**
+ * ashmem_lru_mutex - protects ashmem_lru_list and lru_count
  *
- * Lock Ordering: ashmex_mutex -> i_mutex -> i_alloc_sem
+ * Lock Ordering: ashmem_area.lock -> ashmex_lru_mutex -> i_mutex -> i_alloc_sem
  */
-static DEFINE_MUTEX(ashmem_mutex);
+static DEFINE_MUTEX(ashmem_lru_mutex);
 
 static struct kmem_cache *ashmem_area_cachep __read_mostly;
 static struct kmem_cache *ashmem_range_cachep __read_mostly;
@@ -261,7 +266,10 @@ static int ashmem_open(struct inode *inode, struct file *file)
 	memcpy(asma->name, ASHMEM_NAME_PREFIX, ASHMEM_NAME_PREFIX_LEN);
 	asma->prot_mask = PROT_MASK;
 	file->private_data = asma;
-
+	mutex_init(&asma->lock);
+#ifdef CONFIG_HW_FDLEAK
+	fdleak_report(FDLEAK_WP_ASHMEM, 0);
+#endif
 	return 0;
 }
 
@@ -278,15 +286,20 @@ static int ashmem_release(struct inode *ignored, struct file *file)
 	struct ashmem_area *asma = file->private_data;
 	struct ashmem_range *range, *next;
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
+	mutex_lock(&ashmem_lru_mutex);
 	list_for_each_entry_safe(range, next, &asma->unpinned_list, unpinned)
 		range_del(range);
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&ashmem_lru_mutex);
+	mutex_unlock(&asma->lock);
+	mutex_destroy(&asma->lock);
 
 	if (asma->file)
 		fput(asma->file);
 	kmem_cache_free(ashmem_area_cachep, asma);
-
+#ifdef CONFIG_HW_FDLEAK
+	fdleak_report(FDLEAK_WP_ASHMEM, 1);
+#endif
 	return 0;
 }
 
@@ -305,7 +318,7 @@ static ssize_t ashmem_read(struct file *file, char __user *buf,
 	struct ashmem_area *asma = file->private_data;
 	int ret = 0;
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 
 	/* If size is not set, or set to 0, always return EOF. */
 	if (asma->size == 0)
@@ -316,7 +329,7 @@ static ssize_t ashmem_read(struct file *file, char __user *buf,
 		goto out_unlock;
 	}
 
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 
 	/*
 	 * asma and asma->file are used outside the lock here.  We assume
@@ -331,7 +344,7 @@ static ssize_t ashmem_read(struct file *file, char __user *buf,
 	return ret;
 
 out_unlock:
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 	return ret;
 }
 
@@ -340,19 +353,19 @@ static loff_t ashmem_llseek(struct file *file, loff_t offset, int origin)
 	struct ashmem_area *asma = file->private_data;
 	int ret;
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 
 	if (asma->size == 0) {
-		mutex_unlock(&ashmem_mutex);
+		mutex_unlock(&asma->lock);
 		return -EINVAL;
 	}
 
 	if (!asma->file) {
-		mutex_unlock(&ashmem_mutex);
+		mutex_unlock(&asma->lock);
 		return -EBADF;
 	}
 
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 
 	ret = vfs_llseek(asma->file, offset, origin);
 	if (ret < 0)
@@ -375,7 +388,7 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 	struct ashmem_area *asma = file->private_data;
 	int ret = 0;
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 
 	/* user needs to SET_SIZE before mapping */
 	if (unlikely(!asma->size)) {
@@ -418,7 +431,7 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 	}
 
 out:
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 	return ret;
 }
 
@@ -446,7 +459,7 @@ ashmem_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
 	if (!(sc->gfp_mask & __GFP_FS))
 		return SHRINK_STOP;
 
-	if (!mutex_trylock(&ashmem_mutex))
+	if (!mutex_trylock(&ashmem_lru_mutex))
 		return -1;
 
 	list_for_each_entry_safe(range, next, &ashmem_lru_list, lru) {
@@ -463,7 +476,7 @@ ashmem_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
 		if (--sc->nr_to_scan <= 0)
 			break;
 	}
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&ashmem_lru_mutex);
 	return freed;
 }
 
@@ -492,7 +505,7 @@ static int set_prot_mask(struct ashmem_area *asma, unsigned long prot)
 {
 	int ret = 0;
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 
 	/* the user can only remove, not add, protection bits */
 	if (unlikely((asma->prot_mask & prot) != prot)) {
@@ -507,7 +520,7 @@ static int set_prot_mask(struct ashmem_area *asma, unsigned long prot)
 	asma->prot_mask = prot;
 
 out:
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 	return ret;
 }
 
@@ -531,14 +544,18 @@ static int set_name(struct ashmem_area *asma, void __user *name)
 		return len;
 	if (len == ASHMEM_NAME_LEN)
 		local_name[ASHMEM_NAME_LEN - 1] = '\0';
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 	/* cannot change an existing mapping's name */
 	if (unlikely(asma->file))
 		ret = -EINVAL;
-	else
+	else {
 		strcpy(asma->name + ASHMEM_NAME_PREFIX_LEN, local_name);
+#ifdef CONFIG_HW_FDLEAK
+		trace_ashmem_set_name(local_name, current->tgid);
+#endif
+	}
 
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 	return ret;
 }
 
@@ -554,7 +571,7 @@ static int get_name(struct ashmem_area *asma, void __user *name)
 	 */
 	char local_name[ASHMEM_NAME_LEN];
 
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 	if (asma->name[ASHMEM_NAME_PREFIX_LEN] != '\0') {
 		/*
 		 * Copying only `len', instead of ASHMEM_NAME_LEN, bytes
@@ -566,7 +583,7 @@ static int get_name(struct ashmem_area *asma, void __user *name)
 		len = sizeof(ASHMEM_NAME_DEF);
 		memcpy(local_name, ASHMEM_NAME_DEF, len);
 	}
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 
 	/*
 	 * Now we are just copying from the stack variable to userland
@@ -609,24 +626,27 @@ static int ashmem_pin(struct ashmem_area *asma, size_t pgstart, size_t pgend)
 		 *    create a new range for the other side.
 		 */
 		if (page_range_in_range(range, pgstart, pgend)) {
+			mutex_lock(&ashmem_lru_mutex);
 			ret |= range->purged;
 
 			/* Case #1: Easy. Just nuke the whole thing. */
 			if (page_range_subsumes_range(range, pgstart, pgend)) {
 				range_del(range);
+				mutex_unlock(&ashmem_lru_mutex);
 				continue;
 			}
 
 			/* Case #2: We overlap from the start, so adjust it */
 			if (range->pgstart >= pgstart) {
 				range_shrink(range, pgend + 1, range->pgend);
+				mutex_unlock(&ashmem_lru_mutex);
 				continue;
 			}
 
 			/* Case #3: We overlap from the rear, so adjust it */
 			if (range->pgend <= pgend) {
-				range_shrink(range, range->pgstart,
-					     pgstart - 1);
+				range_shrink(range, range->pgstart, pgstart-1);
+				mutex_unlock(&ashmem_lru_mutex);
 				continue;
 			}
 
@@ -638,6 +658,7 @@ static int ashmem_pin(struct ashmem_area *asma, size_t pgstart, size_t pgend)
 			range_alloc(asma, range, range->purged,
 				    pgend + 1, range->pgend);
 			range_shrink(range, range->pgstart, pgstart - 1);
+			mutex_unlock(&ashmem_lru_mutex);
 			break;
 		}
 	}
@@ -654,6 +675,7 @@ static int ashmem_unpin(struct ashmem_area *asma, size_t pgstart, size_t pgend)
 {
 	struct ashmem_range *range, *next;
 	unsigned int purged = ASHMEM_NOT_PURGED;
+	int ret;
 
 restart:
 	list_for_each_entry_safe(range, next, &asma->unpinned_list, unpinned) {
@@ -668,15 +690,20 @@ restart:
 		if (page_range_subsumed_by_range(range, pgstart, pgend))
 			return 0;
 		if (page_range_in_range(range, pgstart, pgend)) {
+			mutex_lock(&ashmem_lru_mutex);
 			pgstart = min(range->pgstart, pgstart);
 			pgend = max(range->pgend, pgend);
 			purged |= range->purged;
 			range_del(range);
+			mutex_unlock(&ashmem_lru_mutex);
 			goto restart;
 		}
 	}
 
-	return range_alloc(asma, range, purged, pgstart, pgend);
+	mutex_lock(&ashmem_lru_mutex);
+	ret = range_alloc(asma, range, purged, pgstart, pgend);
+	mutex_unlock(&ashmem_lru_mutex);
+	return ret;
 }
 
 /*
@@ -710,13 +737,15 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 	size_t pgstart, pgend;
 	int ret = -EINVAL;
 
-	if (unlikely(copy_from_user(&pin, p, sizeof(pin))))
-		return -EFAULT;
-
-	mutex_lock(&ashmem_mutex);
+	mutex_lock(&asma->lock);
 
 	if (unlikely(!asma->file))
 		goto out_unlock;
+
+	if (unlikely(copy_from_user(&pin, p, sizeof(pin)))) {
+		ret = -EFAULT;
+		goto out_unlock;
+	}
 
 	/* per custom, you can pass zero for len to mean "everything onward" */
 	if (!pin.len)
@@ -747,7 +776,7 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 	}
 
 out_unlock:
-	mutex_unlock(&ashmem_mutex);
+	mutex_unlock(&asma->lock);
 
 	return ret;
 }
@@ -766,12 +795,12 @@ static long ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	case ASHMEM_SET_SIZE:
 		ret = -EINVAL;
-		mutex_lock(&ashmem_mutex);
+		mutex_lock(&asma->lock);
 		if (!asma->file) {
 			ret = 0;
 			asma->size = (size_t)arg;
 		}
-		mutex_unlock(&ashmem_mutex);
+		mutex_unlock(&asma->lock);
 		break;
 	case ASHMEM_GET_SIZE:
 		ret = asma->size;

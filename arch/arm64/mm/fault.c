@@ -338,7 +338,7 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 		mm_flags |= FAULT_FLAG_WRITE;
 	}
 
-	if (addr < TASK_SIZE && is_permission_fault(esr, regs)) {
+	if ((addr < TASK_SIZE) && is_permission_fault(esr, regs)) {
 		/* regs->orig_addr_limit may be 0 if we entered from EL0 */
 		if (regs->orig_addr_limit == KERNEL_DS)
 			die("Accessing user space memory with fs=KERNEL_DS", regs, esr);
@@ -507,6 +507,11 @@ static int do_bad(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 	return 1;
 }
 
+#ifdef CONFIG_TLB_CONFLICT_WORKAROUND
+extern int do_tlb_conflict(unsigned long addr, unsigned int esr,
+			struct pt_regs *regs);
+#endif
+
 static const struct fault_info fault_info[] = {
 	{ do_bad,		SIGBUS,  0,		"ttbr address size fault"	},
 	{ do_bad,		SIGBUS,  0,		"level 1 address size fault"	},
@@ -556,7 +561,11 @@ static const struct fault_info fault_info[] = {
 	{ do_bad,		SIGBUS,  0,		"unknown 45"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 46"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 47"			},
+#ifdef CONFIG_TLB_CONFLICT_WORKAROUND
+	{ do_tlb_conflict,	SIGBUS,  0,		"tlb conflict"			},
+#else
 	{ do_bad,		SIGBUS,  0,		"TLB conflict abort"		},
+#endif
 	{ do_bad,		SIGBUS,  0,		"unknown 49"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 50"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 51"			},
@@ -594,6 +603,24 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 	info.si_code  = inf->code;
 	info.si_addr  = (void __user *)addr;
 	arm64_notify_die("", regs, &info, esr);
+}
+
+unsigned long test_bp_hardening(void)
+{
+	ktime_t before, after;
+	unsigned long consumed_ns = 0;
+	int cpu = smp_processor_id();
+
+	before = ktime_get();
+	/* PC has already been checked in entry.S */
+	arm64_apply_bp_hardening();
+	after = ktime_get();
+
+	consumed_ns = ktime_to_ns(ktime_sub(after, before));
+
+	pr_err("cpu=%d consumed_ns=%lu\n", cpu, consumed_ns);
+
+	return consumed_ns;
 }
 
 asmlinkage void __exception do_el0_irq_bp_hardening(void)

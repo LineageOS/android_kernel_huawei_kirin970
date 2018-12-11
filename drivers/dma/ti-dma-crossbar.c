@@ -54,15 +54,7 @@ struct ti_am335x_xbar_map {
 
 static inline void ti_am335x_xbar_write(void __iomem *iomem, int event, u8 val)
 {
-	/*
-	 * TPCC_EVT_MUX_60_63 register layout is different than the
-	 * rest, in the sense, that event 63 is mapped to lowest byte
-	 * and event 60 is mapped to highest, handle it separately.
-	 */
-	if (event >= 60 && event <= 63)
-		writeb_relaxed(val, iomem + (63 - event % 4));
-	else
-		writeb_relaxed(val, iomem + event);
+	writeb_relaxed(val, iomem + event);
 }
 
 static void ti_am335x_xbar_free(struct device *dev, void *route_data)

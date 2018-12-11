@@ -935,7 +935,7 @@ int __init early_init_dt_scan_chosen_stdout(void)
 	int offset;
 	const char *p, *q, *options = NULL;
 	int l;
-	const struct earlycon_id *match;
+	const struct earlycon_id **p_match;
 	const void *fdt = initial_boot_params;
 
 	offset = fdt_path_offset(fdt, "/chosen");
@@ -962,7 +962,10 @@ int __init early_init_dt_scan_chosen_stdout(void)
 		return 0;
 	}
 
-	for (match = __earlycon_table; match < __earlycon_table_end; match++) {
+	for (p_match = __earlycon_table; p_match < __earlycon_table_end;
+	     p_match++) {
+		const struct earlycon_id *match = *p_match;
+
 		if (!match->compatible[0])
 			continue;
 
@@ -1188,9 +1191,22 @@ int __init __weak early_init_dt_reserve_memory_arch(phys_addr_t base,
  * called from unflatten_device_tree() to bootstrap devicetree itself
  * Architectures can override this definition if memblock isn't used
  */
+#ifdef CONFIG_HISI_KERNELDUMP
+extern  int add_extra_table(u64 phys_addr,u64 size);
+#endif
 void * __init __weak early_init_dt_alloc_memory_arch(u64 size, u64 align)
 {
+#ifdef CONFIG_HISI_KERNELDUMP
+	void * p;
+
+	p = __va(memblock_alloc(size, align));
+	if (NULL != p)
+		(void)add_extra_table(virt_to_phys(p),size);
+
+	return p;
+#else
 	return __va(memblock_alloc(size, align));
+#endif
 }
 #else
 void __init __weak early_init_dt_add_memory_arch(u64 base, u64 size)

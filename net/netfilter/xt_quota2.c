@@ -50,6 +50,9 @@ typedef struct ulog_packet_msg {
 struct xt_quota_counter {
 	u_int64_t quota;
 	spinlock_t lock;
+	bool limit_log_rate;
+	bool log_pending;
+	unsigned long last_log;
 	struct list_head list;
 	atomic_t ref;
 	char name[sizeof(((struct xt_quota_mtinfo2 *)NULL)->name)];
@@ -74,6 +77,8 @@ static unsigned int quota_list_perms = S_IRUGO | S_IWUSR;
 static kuid_t quota_list_uid = KUIDT_INIT(0);
 static kgid_t quota_list_gid = KGIDT_INIT(0);
 module_param_named(perms, quota_list_perms, uint, S_IRUGO | S_IWUSR);
+
+static const char ALERT_GLOBAL_NAME[] = "globalAlert";
 
 #ifdef CONFIG_NETFILTER_XT_MATCH_QUOTA2_LOG
 static void quota2_log(unsigned int hooknum,
@@ -188,11 +193,19 @@ q2_new_counter(const struct xt_quota_mtinfo2 *q, bool anon)
 		return NULL;
 
 	e->quota = q->quota;
+
+	e->limit_log_rate = false;
+	e->log_pending = false;
+	e->last_log = jiffies;
+
 	spin_lock_init(&e->lock);
 	if (!anon) {
 		INIT_LIST_HEAD(&e->list);
 		atomic_set(&e->ref, 1);
 		strlcpy(e->name, q->name, sizeof(e->name));
+		if (strncmp(e->name, ALERT_GLOBAL_NAME, sizeof(e->name)) == 0) {
+			e->limit_log_rate = true;
+		}
 	}
 	return e;
 }
@@ -307,6 +320,7 @@ quota_mt2(const struct sk_buff *skb, struct xt_action_param *par)
 	struct xt_quota_mtinfo2 *q = (void *)par->matchinfo;
 	struct xt_quota_counter *e = q->master;
 	bool ret = q->flags & XT_QUOTA_INVERT;
+	unsigned long now = jiffies;
 
 	spin_lock_bh(&e->lock);
 	if (q->flags & XT_QUOTA_GROW) {
@@ -326,11 +340,30 @@ quota_mt2(const struct sk_buff *skb, struct xt_action_param *par)
 		} else {
 			/* We are transitioning, log that fact. */
 			if (e->quota) {
-				quota2_log(par->hooknum,
-					   skb,
-					   par->in,
-					   par->out,
-					   q->name);
+				if (e->limit_log_rate && !time_after(now, e->last_log + 2 * HZ)) {
+					e->log_pending = true;
+				} else {
+					quota2_log(par->hooknum,
+						   skb,
+						   par->in,
+						   par->out,
+						   q->name);
+					if (e->limit_log_rate) {
+						e->last_log = now;
+						e->log_pending = false;
+					}
+				}
+			} else {
+				/* If we can send pending log */
+				if (e->limit_log_rate && e->log_pending && time_after(now, e->last_log + 2 * HZ)) {
+					quota2_log(par->hooknum,
+						   skb,
+						   par->in,
+						   par->out,
+						   q->name);
+					e->log_pending = false;
+					e->last_log = now;
+				}
 			}
 			/* we do not allow even small packets from now on */
 			e->quota = 0;

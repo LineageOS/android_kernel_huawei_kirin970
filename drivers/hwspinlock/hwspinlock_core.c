@@ -623,6 +623,24 @@ out:
 }
 EXPORT_SYMBOL_GPL(hwspin_lock_request_specific);
 
+#ifdef CONFIG_HISI_HWSPINLOCK_DEBUG
+struct hwspinlock *hwspin_lock_lookup(unsigned int id)
+{
+	struct hwspinlock *hwlock;
+
+	mutex_lock(&hwspinlock_tree_lock);
+
+	hwlock = radix_tree_lookup(&hwspinlock_tree, id);
+	if (!hwlock)
+		pr_warn("hwspinlock %u does not exist\n", id);
+
+	mutex_unlock(&hwspinlock_tree_lock);
+
+	return hwlock;
+}
+EXPORT_SYMBOL_GPL(hwspin_lock_lookup);
+#endif
+
 /**
  * hwspin_lock_free() - free a specific hwspinlock
  * @hwlock: the specific hwspinlock to free

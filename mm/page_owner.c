@@ -206,8 +206,11 @@ void __split_page_owner(struct page *page, unsigned int order)
 
 	page_owner = get_page_owner(page_ext);
 	page_owner->order = 0;
-	for (i = 1; i < (1 << order); i++)
+	page_tracker_set_tracker(page, 0);
+	for (i = 1; i < (1 << order); i++) {
 		__copy_page_owner(page, page + i);
+		page_tracker_set_tracker(page + i, 0);
+	}
 }
 
 void __copy_page_owner(struct page *oldpage, struct page *newpage)

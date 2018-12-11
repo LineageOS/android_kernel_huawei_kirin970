@@ -286,6 +286,8 @@ static int nsblk_attach_disk(struct nd_namespace_blk *nsblk)
 	disk->queue		= q;
 	disk->flags		= GENHD_FL_EXT_DEVT;
 	nvdimm_namespace_disk_name(&nsblk->common, disk->disk_name);
+	set_capacity(disk, 0);
+	device_add_disk(dev, disk);
 
 	if (devm_add_action_or_reset(dev, nd_blk_release_disk, disk))
 		return -ENOMEM;
@@ -298,7 +300,6 @@ static int nsblk_attach_disk(struct nd_namespace_blk *nsblk)
 	}
 
 	set_capacity(disk, available_disk_size >> SECTOR_SHIFT);
-	device_add_disk(dev, disk);
 	revalidate_disk(disk);
 	return 0;
 }

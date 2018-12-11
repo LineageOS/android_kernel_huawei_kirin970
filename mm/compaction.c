@@ -22,6 +22,10 @@
 #include <linux/page_owner.h>
 #include "internal.h"
 
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+#include <linux/unmovable_isolate.h>
+#endif
+
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
 {
@@ -815,8 +819,10 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		 * admittedly racy check.
 		 */
 		if (!page_mapping(page) &&
-		    page_count(page) > page_mapcount(page))
+		    page_count(page) > page_mapcount(page)) {
+			cc->nr_pinnedpages++;
 			goto isolate_fail;
+		}
 
 		/* If we already hold the lock, we can skip some rechecking */
 		if (!locked) {
@@ -1234,9 +1240,16 @@ static isolate_migrate_t isolate_migratepages(struct zone *zone,
 		 * Async compaction is optimistic to see if the minimum amount
 		 * of work satisfies the allocation.
 		 */
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		if ((cc->mode == MIGRATE_ASYNC &&
+		    !migrate_async_suitable(get_pageblock_migratetype(page))) ||
+		    unmovable_isolate_pageblock(zone, page))
+			continue;
+#else
 		if (cc->mode == MIGRATE_ASYNC &&
 		    !migrate_async_suitable(get_pageblock_migratetype(page)))
 			continue;
+#endif
 
 		/* Perform the isolation */
 		low_pfn = isolate_migratepages_block(cc, low_pfn,
@@ -1318,7 +1331,7 @@ static enum compact_result __compact_finished(struct zone *zone, struct compact_
 
 #ifdef CONFIG_CMA
 		/* MIGRATE_MOVABLE can fallback on MIGRATE_CMA */
-		if (migratetype == MIGRATE_MOVABLE &&
+		if (cc->gfp_mask & ___GFP_CMA &&
 			!list_empty(&area->free_list[MIGRATE_CMA]))
 			return COMPACT_SUCCESS;
 #endif
@@ -1327,7 +1340,7 @@ static enum compact_result __compact_finished(struct zone *zone, struct compact_
 		 * other migratetype buddy lists.
 		 */
 		if (find_suitable_fallback(area, order, migratetype,
-						true, &can_steal) != -1)
+						true, &can_steal, cc->gfp_mask) != -1)
 			return COMPACT_SUCCESS;
 	}
 

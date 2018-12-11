@@ -139,8 +139,7 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ CP_NO_SPC_ROLL,	"no space roll forward" },	\
 		{ CP_NODE_NEED_CP,	"node needs cp" },		\
 		{ CP_FASTBOOT_MODE,	"fastboot mode" },		\
-		{ CP_SPEC_LOG_NUM,	"log type is 2" },		\
-		{ CP_RECOVER_DIR,	"dir needs recovery" })
+		{ CP_SPEC_LOG_NUM,	"log type is 2" })
 
 struct victim_sel_policy;
 struct f2fs_map_blocks;
@@ -1608,6 +1607,73 @@ DEFINE_EVENT(f2fs_sync_dirty_inodes, f2fs_sync_dirty_inodes_exit,
 
 	TP_ARGS(sb, type, count)
 );
+
+TRACE_EVENT(f2fs_skip_log_writeback,
+
+	TP_PROTO(unsigned int ino_num),
+
+	TP_ARGS(ino_num),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, ino_num)
+	),
+
+	TP_fast_assign(
+		__entry->ino_num = ino_num;
+	),
+
+	TP_printk("f2fs skip log writeback :ino %u", __entry->ino_num)
+);
+
+TRACE_EVENT(f2fs_cold_file_should_IPU,
+
+	TP_PROTO(unsigned int ino_num),
+
+	TP_ARGS(ino_num),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, ino_num)
+	),
+
+	TP_fast_assign(
+		__entry->ino_num = ino_num;
+	),
+
+	TP_printk("f2fs cold file need ipu :ino %u", __entry->ino_num)
+);
+
+#ifdef CONFIG_F2FS_GRADING_SSR
+DECLARE_EVENT_CLASS(f2fs_grading_ssr,
+
+	TP_PROTO(unsigned int left, unsigned int free,
+					unsigned int seq),
+
+	TP_ARGS(left, free, seq),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, left)
+		__field(unsigned int, free)
+		__field(unsigned int, seq)
+	),
+
+	TP_fast_assign(
+		__entry->left = left;
+		__entry->free = free;
+		__entry->seq  = seq;
+	),
+
+	TP_printk("ssr :left_space %u free_segments: %u is_seq: %u ",
+		__entry->left, __entry->free, __entry->seq)
+);
+
+DEFINE_EVENT(f2fs_grading_ssr, f2fs_grading_ssr_allocate,
+
+	TP_PROTO(unsigned int left, unsigned int free,
+					unsigned int seq),
+
+	TP_ARGS(left, free, seq)
+);
+#endif
 
 #endif /* _TRACE_F2FS_H */
 

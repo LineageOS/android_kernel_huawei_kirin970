@@ -72,7 +72,7 @@ int zpool_unregister_driver(struct zpool_driver *driver)
 EXPORT_SYMBOL(zpool_unregister_driver);
 
 /* this assumes @type is null-terminated. */
-static struct zpool_driver *zpool_get_driver(const char *type)
+struct zpool_driver *zpool_get_driver(const char *type)
 {
 	struct zpool_driver *driver;
 
@@ -91,6 +91,7 @@ static struct zpool_driver *zpool_get_driver(const char *type)
 	spin_unlock(&drivers_lock);
 	return NULL;
 }
+EXPORT_SYMBOL(zpool_get_driver);
 
 static void zpool_put_driver(struct zpool_driver *driver)
 {
@@ -170,7 +171,7 @@ struct zpool *zpool_create_pool(const char *type, const char *name, gfp_t gfp,
 		return NULL;
 	}
 
-	zpool = kmalloc(sizeof(*zpool), gfp);
+	zpool = kmalloc(sizeof(*zpool), GFP_KERNEL);
 	if (!zpool) {
 		pr_err("couldn't create zpool - out of memory\n");
 		zpool_put_driver(driver);
@@ -340,6 +341,28 @@ void *zpool_map_handle(struct zpool *zpool, unsigned long handle,
 void zpool_unmap_handle(struct zpool *zpool, unsigned long handle)
 {
 	zpool->driver->unmap(zpool->pool, handle);
+}
+
+/**
+ * zpool_compact() - try to run compaction over zpool
+ * @pool	The zpool to compact
+ * @compacted	The number of migrated pages
+ *
+ * Returns: 0 on success, error code otherwise
+ */
+int zpool_compact(struct zpool *zpool, unsigned long *compacted)
+{
+	return zpool->driver->compact(zpool->pool, compacted);
+}
+
+/**
+ * zpool_stats() - obtain zpool statistics
+ * @pool	The zpool to get statistics for
+ * @zstats	stats to fill in
+ */
+void zpool_stats(struct zpool *zpool, struct zpool_stats *zstats)
+{
+	zpool->driver->stats(zpool->pool, zstats);
 }
 
 /**

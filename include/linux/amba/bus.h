@@ -34,6 +34,7 @@ struct amba_device {
 	unsigned int		periphid;
 	unsigned int		irq[AMBA_NR_IRQS];
 	char			*driver_override;
+	unsigned int		secure_mode;
 };
 
 struct amba_driver {

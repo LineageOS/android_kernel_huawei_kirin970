@@ -80,7 +80,13 @@
 #else
 #define LAST_CPUPID_WIDTH 0
 #endif
-
+#ifdef CONFIG_TASK_PROTECT_LRU
+#if SECTIONS_WIDTH+ZONES_WIDTH+NODES_SHIFT+LAST_CPUPID_SHIFT+2 <= BITS_PER_LONG - NR_PAGEFLAGS
+#define PROTECT_LRU_WIDTH 2
+#else
+#define PROTECT_LRU_WIDTH ({ BUILD_BUG(); 0; })
+#endif
+#endif
 /*
  * We are going to use the flags for the page to node mapping if its in
  * there.  This includes the case where there is no node, so it is implicit.

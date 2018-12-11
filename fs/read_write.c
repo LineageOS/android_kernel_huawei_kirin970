@@ -37,6 +37,35 @@ static inline int unsigned_offsets(struct file *file)
 	return file->f_mode & FMODE_UNSIGNED_OFFSET;
 }
 
+#define EXFAT_SUPER_MAGIC		(0x2011BAB0L)
+#define NTFS_SUPER_MAGIC		(0x5346544EL)
+#define FUSE_SUPER_MAGIC 		(0x65735546L)
+
+static inline void count_file_char(struct file *file, int num, bool read)
+{
+#ifdef CONFIG_TASK_XACCT
+	if (file) {
+		switch (file->f_inode->i_sb->s_magic) {
+			case F2FS_SUPER_MAGIC:
+			case EXT4_SUPER_MAGIC:
+			case MSDOS_SUPER_MAGIC:
+			case NTFS_SUPER_MAGIC:
+			case EXFAT_SUPER_MAGIC:
+			case FUSE_SUPER_MAGIC:
+				if (read) {
+					add_file_rchar(current, num);
+				} else {
+					add_file_wchar(current, num);
+				}
+				break;
+
+			default:
+				break;
+		}
+	}
+#endif
+}
+
 /**
  * vfs_setpos - update the file offset for lseek
  * @file:	file structure in question
@@ -472,6 +501,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 		ret = __vfs_read(file, buf, count, pos);
 		if (ret > 0) {
 			fsnotify_access(file);
+			count_file_char(file, ret, true);
 			add_rchar(current, ret);
 		}
 		inc_syscr(current);
@@ -530,6 +560,7 @@ ssize_t __kernel_write(struct file *file, const char *buf, size_t count, loff_t 
 	set_fs(old_fs);
 	if (ret > 0) {
 		fsnotify_modify(file);
+		count_file_char(file, ret, false);
 		add_wchar(current, ret);
 	}
 	inc_syscw(current);
@@ -557,6 +588,7 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 		ret = __vfs_write(file, buf, count, pos);
 		if (ret > 0) {
 			fsnotify_modify(file);
+			count_file_char(file, ret, false);
 			add_wchar(current, ret);
 		}
 		inc_syscw(current);
@@ -926,8 +958,10 @@ static ssize_t do_readv(unsigned long fd, const struct iovec __user *vec,
 		fdput_pos(f);
 	}
 
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(f.file, ret, true);
 		add_rchar(current, ret);
+	}
 	inc_syscr(current);
 	return ret;
 }
@@ -946,8 +980,10 @@ static ssize_t do_writev(unsigned long fd, const struct iovec __user *vec,
 		fdput_pos(f);
 	}
 
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(f.file, ret, false);
 		add_wchar(current, ret);
+	}
 	inc_syscw(current);
 	return ret;
 }
@@ -975,8 +1011,10 @@ static ssize_t do_preadv(unsigned long fd, const struct iovec __user *vec,
 		fdput(f);
 	}
 
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(f.file, ret, true);
 		add_rchar(current, ret);
+	}
 	inc_syscr(current);
 	return ret;
 }
@@ -998,8 +1036,10 @@ static ssize_t do_pwritev(unsigned long fd, const struct iovec __user *vec,
 		fdput(f);
 	}
 
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(f.file, ret, false);
 		add_wchar(current, ret);
+	}
 	inc_syscw(current);
 	return ret;
 }
@@ -1120,8 +1160,10 @@ static size_t compat_readv(struct file *file,
 	ret = compat_do_readv_writev(READ, file, vec, vlen, pos, flags);
 
 out:
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(file, ret, true);
 		add_rchar(current, ret);
+	}
 	inc_syscr(current);
 	return ret;
 }
@@ -1227,8 +1269,10 @@ static size_t compat_writev(struct file *file,
 	ret = compat_do_readv_writev(WRITE, file, vec, vlen, pos, flags);
 
 out:
-	if (ret > 0)
+	if (ret > 0) {
+		count_file_char(file, ret, false);
 		add_wchar(current, ret);
+	}
 	inc_syscw(current);
 	return ret;
 }
@@ -1394,6 +1438,8 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	file_end_write(out.file);
 
 	if (retval > 0) {
+		count_file_char(in.file, retval, true);
+		count_file_char(out.file, retval, false);
 		add_rchar(current, retval);
 		add_wchar(current, retval);
 		fsnotify_access(in.file);

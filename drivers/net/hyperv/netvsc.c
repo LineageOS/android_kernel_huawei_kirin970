@@ -151,13 +151,6 @@ static void netvsc_destroy_buf(struct hv_device *device)
 				       sizeof(struct nvsp_message),
 				       (unsigned long)revoke_packet,
 				       VM_PKT_DATA_INBAND, 0);
-		/* If the failure is because the channel is rescinded;
-		 * ignore the failure since we cannot send on a rescinded
-		 * channel. This would allow us to properly cleanup
-		 * even when the channel is rescinded.
-		 */
-		if (device->channel->rescind)
-			ret = 0;
 		/*
 		 * If we failed here, we might as well return and
 		 * have a leak rather than continue and a bugchk
@@ -218,15 +211,6 @@ static void netvsc_destroy_buf(struct hv_device *device)
 				       sizeof(struct nvsp_message),
 				       (unsigned long)revoke_packet,
 				       VM_PKT_DATA_INBAND, 0);
-
-		/* If the failure is because the channel is rescinded;
-		 * ignore the failure since we cannot send on a rescinded
-		 * channel. This would allow us to properly cleanup
-		 * even when the channel is rescinded.
-		 */
-		if (device->channel->rescind)
-			ret = 0;
-
 		/* If we failed here, we might as well return and
 		 * have a leak rather than continue and a bugchk
 		 */

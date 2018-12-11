@@ -268,8 +268,7 @@ static void __init atari_init_midi_port(int cflag)
 	int parity = (cflag & PARENB) ? ((cflag & PARODD) ? 0x0c : 0x08) : 0x04;
 	int div;
 
-	/* 4800 selects 7812.5, 115200 selects 500000, all other (incl. 9600 as
-	 * default) the standard MIDI speed 31250. */
+	
 	if (cflag & CBAUDEX)
 		baud += B38400;
 	if (baud == B4800)

@@ -488,4 +488,18 @@ struct ff_effect {
 #define FF_MAX		0x7f
 #define FF_CNT		(FF_MAX+1)
 
+#ifdef CONFIG_HISI_VOLUMEKEY_COMBINATION
+/*
+ * combination keys(up+down+powerkey) to fastboot states
+ * volume up and down bit
+ */
+#define VOL_DOWN_BIT		(0)
+#define VOL_UP_BIT		(1)
+
+#define VOL_UPDOWN_PRESS		((1<<VOL_DOWN_BIT) | (1<<VOL_UP_BIT))
+
+extern void gpio_key_vol_updown_press_set_zero(void);
+extern int gpio_key_vol_updown_press_get(void);
+extern int is_gpio_key_vol_updown_pressed(void);
+#endif
 #endif /* _UAPI_INPUT_H */

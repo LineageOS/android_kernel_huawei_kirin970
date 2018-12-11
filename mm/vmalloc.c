@@ -31,6 +31,8 @@
 #include <linux/compiler.h>
 #include <linux/llist.h>
 #include <linux/bitops.h>
+#include <linux/hisi/rdr_hisi_ap_hook.h>
+#include <linux/hisi/page_tracker.h>
 
 #include <asm/uaccess.h>
 #include <asm/tlbflush.h>
@@ -1345,6 +1347,11 @@ static void setup_vmalloc_vm(struct vm_struct *vm, struct vmap_area *va,
 	vm->addr = (void *)va->va_start;
 	vm->size = va->va_end - va->va_start;
 	vm->caller = caller;
+#ifdef CONFIG_DEBUG_VMALLOC
+	vm->pid = current->pid;
+	memset(vm->task_name, 0, TASK_COMM_LEN);
+	memcpy(vm->task_name, current->comm, TASK_COMM_LEN - 1);
+#endif
 	va->vm = vm;
 	va->flags |= VM_VM_AREA;
 	spin_unlock(&vmap_area_lock);
@@ -1549,6 +1556,8 @@ void vfree(const void *addr)
 			schedule_work(&p->wq);
 	} else
 		__vunmap(addr, 1);
+
+	vmalloc_trace_hook((unsigned char)MEM_FREE, _RET_IP_, (unsigned long)addr, 0, (unsigned long long)0);/*lint !e571*/
 }
 EXPORT_SYMBOL(vfree);
 
@@ -1628,6 +1637,11 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 		pages = kmalloc_node(array_size, nested_gfp, node);
 	}
 	area->pages = pages;
+#ifdef CONFIG_DEBUG_VMALLOC
+	area->pid = current->pid;
+	memset(area->task_name, 0, TASK_COMM_LEN);
+	memcpy(area->task_name, current->comm, TASK_COMM_LEN - 1);
+#endif
 	if (!area->pages) {
 		remove_vm_area(area->addr);
 		kfree(area);
@@ -1648,6 +1662,7 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 			goto fail;
 		}
 		area->pages[i] = page;
+		page_tracker_set_type(page, TRACK_VMALLOC, 0);
 		if (gfpflags_allow_blocking(gfp_mask))
 			cond_resched();
 	}
@@ -1715,6 +1730,9 @@ void *__vmalloc_node_range(unsigned long size, unsigned long align,
 	 * the vmalloc'ed block.
 	 */
 	kmemleak_alloc(addr, real_size, 2, gfp_mask);
+
+	vmalloc_trace_hook((unsigned char)MEM_ALLOC, (unsigned long)caller, (unsigned long)addr,
+						(struct page *)area->pages[0], size);
 
 	return addr;
 
@@ -2683,6 +2701,13 @@ static int s_show(struct seq_file *m, void *p)
 	if (is_vmalloc_addr(v->pages))
 		seq_puts(m, " vpages");
 
+#ifdef CONFIG_DEBUG_VMALLOC
+	if (v->pid)
+		seq_printf(m, " pid=%d", v->pid);
+
+	if (v->task_name)
+		seq_printf(m, " task_name=%s", v->task_name);
+#endif
 	show_numa_info(m, v);
 	seq_putc(m, '\n');
 	return 0;

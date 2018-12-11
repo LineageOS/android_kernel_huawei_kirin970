@@ -204,7 +204,7 @@ static int qed_vf_pf_acquire(struct qed_hwfn *p_hwfn)
 		/* send acquire request */
 		rc = qed_send_msg2pf(p_hwfn, &resp->hdr.status, sizeof(*resp));
 		if (rc)
-			goto exit;
+			return rc;
 
 		/* copy acquire response from buffer to p_hwfn */
 		memcpy(&p_iov->acquire_resp, resp, sizeof(p_iov->acquire_resp));

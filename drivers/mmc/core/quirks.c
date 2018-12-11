@@ -34,7 +34,7 @@
 #ifndef SDIO_DEVICE_ID_MARVELL_8797_F0
 #define SDIO_DEVICE_ID_MARVELL_8797_F0	0x9128
 #endif
-
+/*lint -save -e501*/
 static const struct mmc_fixup mmc_fixup_methods[] = {
 	SDIO_FIXUP(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_TI_WL1271,
 		   add_quirk, MMC_QUIRK_NONSTD_FUNC_IF),
@@ -80,4 +80,5 @@ void mmc_fixup_device(struct mmc_card *card, const struct mmc_fixup *table)
 		}
 	}
 }
+/*lint -restore*/
 EXPORT_SYMBOL(mmc_fixup_device);

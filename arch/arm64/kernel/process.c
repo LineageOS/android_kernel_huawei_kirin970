@@ -56,6 +56,11 @@
 #include <asm/processor.h>
 #include <asm/stacktrace.h>
 
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/rdr_hisi_platform.h>
+#include <linux/smp.h>
+#endif
+
 #ifdef CONFIG_CC_STACKPROTECTOR
 #include <linux/stackprotector.h>
 unsigned long __stack_chk_guard __read_mostly;
@@ -92,6 +97,15 @@ void arch_cpu_idle_dead(void)
 }
 #endif
 
+void arch_cpu_idle_enter(void)
+{
+	idle_notifier_call_chain(IDLE_START);
+}
+
+void arch_cpu_idle_exit(void)
+{
+	idle_notifier_call_chain((unsigned long)IDLE_END);
+}
 /*
  * Called by kexec, immediately prior to machine_kexec().
  *
@@ -235,6 +249,9 @@ void __show_regs(struct pt_regs *regs)
 {
 	int i, top_reg;
 	u64 lr, sp;
+#ifdef CONFIG_HISI_BB
+	unsigned int mask = 0x1 << get_cpu();
+#endif
 
 	if (compat_user_mode(regs)) {
 		lr = regs->compat_lr;
@@ -247,6 +264,7 @@ void __show_regs(struct pt_regs *regs)
 	}
 
 	show_regs_print_info(KERN_DEFAULT);
+
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
 	print_symbol("LR is at %s\n", lr);
 	printk("pc : [<%016llx>] lr : [<%016llx>] pstate: %08llx\n",
@@ -267,8 +285,14 @@ void __show_regs(struct pt_regs *regs)
 		pr_cont("\n");
 	}
 	if (!user_mode(regs))
-		show_extra_register_data(regs, 128);
+#ifdef CONFIG_HISI_BB
+		if (!(g_cpu_in_ipi_stop & mask))
+#endif
+			show_extra_register_data(regs, 128);
 	printk("\n");
+#ifdef CONFIG_HISI_BB
+	put_cpu();
+#endif
 }
 
 void show_regs(struct pt_regs * regs)
@@ -390,7 +414,12 @@ static void tls_thread_switch(struct task_struct *next)
 void uao_thread_switch(struct task_struct *next)
 {
 	if (IS_ENABLED(CONFIG_ARM64_UAO)) {
-		if (task_thread_info(next)->addr_limit == KERNEL_DS)
+#ifndef CONFIG_HISI_HHEE
+		bool uao = task_thread_info(next)->addr_limit == KERNEL_DS;
+#else
+		bool uao = hkip_get_task_bit(hkip_addr_limit_bits, next, true);
+#endif
+		if (uao)
 			asm(ALTERNATIVE("nop", SET_PSTATE_UAO(1), ARM64_HAS_UAO));
 		else
 			asm(ALTERNATIVE("nop", SET_PSTATE_UAO(0), ARM64_HAS_UAO));

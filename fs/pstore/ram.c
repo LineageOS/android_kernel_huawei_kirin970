@@ -209,9 +209,10 @@ static ssize_t ramoops_pstore_read(u64 *id, enum pstore_type_id *type,
 		header_length = ramoops_read_kmsg_hdr(persistent_ram_old(prz),
 						      time, compressed);
 		/* Clear and skip this DMESG record if it has no valid header */
+		persistent_ram_zap(prz);
+
 		if (!header_length) {
 			persistent_ram_free_old(prz);
-			persistent_ram_zap(prz);
 			prz = NULL;
 		}
 	}
@@ -489,63 +490,86 @@ static int ramoops_init_prz(struct device *dev, struct ramoops_context *cxt,
 }
 
 static int ramoops_parse_dt_size(struct platform_device *pdev,
-				 const char *propname, u32 *value)
+		const char *propname, unsigned long *val)
 {
-	u32 val32 = 0;
+	u64 val64;
 	int ret;
 
-	ret = of_property_read_u32(pdev->dev.of_node, propname, &val32);
-	if (ret < 0 && ret != -EINVAL) {
+	ret = of_property_read_u64(pdev->dev.of_node, propname, &val64);
+	if (ret == -EINVAL) {
+		*val = 0;
+		return 0;
+	} else if (ret != 0) {
 		dev_err(&pdev->dev, "failed to parse property %s: %d\n",
-			propname, ret);
+				propname, ret);
 		return ret;
 	}
 
-	if (val32 > INT_MAX) {
-		dev_err(&pdev->dev, "%s %u > INT_MAX\n", propname, val32);
+	if (val64 > ULONG_MAX) {
+		dev_err(&pdev->dev, "invalid %s %llu\n", propname, val64);
 		return -EOVERFLOW;
 	}
 
-	*value = val32;
+	*val = val64;
 	return 0;
 }
 
 static int ramoops_parse_dt(struct platform_device *pdev,
-			    struct ramoops_platform_data *pdata)
+		struct ramoops_platform_data *pdata)
 {
 	struct device_node *of_node = pdev->dev.of_node;
-	struct resource *res;
-	u32 value;
+	struct device_node *mem_region;
+	struct resource res;
+	u32 ecc_size;
 	int ret;
 
 	dev_dbg(&pdev->dev, "using Device Tree\n");
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(&pdev->dev,
-			"failed to locate DT /reserved-memory resource\n");
-		return -EINVAL;
+	mem_region = of_parse_phandle(of_node, "memory-region", 0);
+	if (!mem_region) {
+		dev_err(&pdev->dev, "no memory-region phandle\n");
+		return -ENODEV;
 	}
 
-	pdata->mem_size = resource_size(res);
-	pdata->mem_address = res->start;
+	ret = of_address_to_resource(mem_region, 0, &res);
+	of_node_put(mem_region);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to translate memory-region to resource: %d\n",
+				ret);
+		return ret;
+	}
+
+	pdata->mem_size = resource_size(&res);
+	pdata->mem_address = res.start;
 	pdata->mem_type = of_property_read_bool(of_node, "unbuffered");
 	pdata->dump_oops = !of_property_read_bool(of_node, "no-dump-oops");
 
-#define parse_size(name, field) {					\
-		ret = ramoops_parse_dt_size(pdev, name, &value);	\
-		if (ret < 0)						\
-			return ret;					\
-		field = value;						\
+	ret = ramoops_parse_dt_size(pdev, "record-size", &pdata->record_size);
+	if (ret < 0)
+		return ret;
+
+	ret = ramoops_parse_dt_size(pdev, "console-size", &pdata->console_size);
+	if (ret < 0)
+		return ret;
+
+	ret = ramoops_parse_dt_size(pdev, "ftrace-size", &pdata->ftrace_size);
+	if (ret < 0)
+		return ret;
+
+	ret = ramoops_parse_dt_size(pdev, "pmsg-size", &pdata->pmsg_size);
+	if (ret < 0)
+		return ret;
+
+	ret = of_property_read_u32(of_node, "ecc-size", &ecc_size);
+	if (ret == 0) {
+		if (ecc_size > INT_MAX) {
+			dev_err(&pdev->dev, "invalid ecc-size %u\n", ecc_size);
+			return -EOVERFLOW;
+		}
+		pdata->ecc_info.ecc_size = ecc_size;
+	} else if (ret != -EINVAL) {
+		return ret;
 	}
-
-	parse_size("record-size", pdata->record_size);
-	parse_size("console-size", pdata->console_size);
-	parse_size("ftrace-size", pdata->ftrace_size);
-	parse_size("pmsg-size", pdata->pmsg_size);
-	parse_size("ecc-size", pdata->ecc_info.ecc_size);
-
-#undef parse_size
 
 	return 0;
 }

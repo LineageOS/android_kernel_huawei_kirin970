@@ -71,6 +71,10 @@
 #include <net/tcp_states.h>
 #include <linux/net_tstamp.h>
 
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm_types.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -227,6 +231,9 @@ struct sock_common {
 		u32		skc_tw_snd_nxt; /* struct tcp_timewait_sock */
 	};
 	/* public: */
+    #ifdef CONFIG_HW_DPIMARK_MODULE
+	unsigned int    skc_hwdpi_mark;
+    #endif
 };
 
 /**
@@ -260,6 +267,7 @@ struct sock_common {
   *	@sk_gso_type: GSO type (e.g. %SKB_GSO_TCPV4)
   *	@sk_gso_max_size: Maximum GSO segment size to build
   *	@sk_gso_max_segs: Maximum number of GSO segments
+  *	@sk_pacing_shift: scaling factor for TCP Small Queues
   *	@sk_lingertime: %SO_LINGER l_linger setting
   *	@sk_backlog: always used with the per-socket spinlock held
   *	@sk_callback_lock: used with the callbacks in the end of this struct
@@ -341,6 +349,7 @@ struct sock {
 #define sk_incoming_cpu		__sk_common.skc_incoming_cpu
 #define sk_flags		__sk_common.skc_flags
 #define sk_rxhash		__sk_common.skc_rxhash
+#define sk_hwdpi_mark   __sk_common.skc_hwdpi_mark
 
 	socket_lock_t		sk_lock;
 	struct sk_buff_head	sk_receive_queue;
@@ -374,6 +383,23 @@ struct sock {
 		struct socket_wq __rcu	*sk_wq;
 		struct socket_wq	*sk_wq_raw;
 	};
+
+#ifdef CONFIG_HUAWEI_BASTET
+	struct bastet_sock *bastet;
+	struct bastet_reconn *reconn;
+	int fg_Spec;
+	int fg_Step;
+	bool prio_channel;
+	uint8_t discard_duration; /* bit0~bit1 indication unit:10ms,40ms,100ms,400ms;bit2~bit7 indication gear */
+#endif
+#if defined(CONFIG_HUAWEI_BASTET) || defined(CONFIG_HUAWEI_XENGINE)
+	uint8_t acc_state;
+#endif
+
+#ifdef CONFIG_HW_WIFIPRO
+	int wifipro_is_google_sock;
+	char wifipro_dev_name[IFNAMSIZ];
+#endif
 #ifdef CONFIG_XFRM
 	struct xfrm_policy __rcu *sk_policy[2];
 #endif
@@ -409,6 +435,7 @@ struct sock {
 	unsigned int		sk_gso_max_size;
 	u16			sk_gso_max_segs;
 	int			sk_rcvlowat;
+	u8			sk_pacing_shift;
 	unsigned long	        sk_lingertime;
 	struct sk_buff_head	sk_error_queue;
 	struct proto		*sk_prot_creator;
@@ -449,6 +476,20 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	unsigned int		sk_nm_uid;
+	struct tcp_statistics	*sk_tcp_statis;
+	union {
+		struct nm_http_entry	*sk_nm_http;
+		struct nm_dnsp_entry	*sk_nm_dnsp;
+	};
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+#ifdef CONFIG_HUAWEI_XENGINE
+	int			hicom_flag;
+#endif
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	unsigned long	sk_born_stamp;
+#endif
 };
 
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))
@@ -1067,7 +1108,7 @@ struct proto {
 	atomic_t		socks;
 #endif
 	int			(*diag_destroy)(struct sock *sk, int err);
-};
+} __randomize_layout;
 
 int proto_register(struct proto *prot, int alloc_slab);
 void proto_unregister(struct proto *prot);
@@ -2285,5 +2326,16 @@ extern int sysctl_optmem_max;
 
 extern __u32 sysctl_wmem_default;
 extern __u32 sysctl_rmem_default;
+
+/* Default TCP Small queue budget is ~1 ms of data (1sec >> 10)
+ * Some wifi drivers need to tweak it to get more chunks.
+ * They can use this helper from their ndo_start_xmit()
+ */
+static inline void sk_pacing_shift_update(struct sock *sk, int val)
+{
+	if (!sk || !sk_fullsock(sk) || sk->sk_pacing_shift == val)
+		return;
+	sk->sk_pacing_shift = val;
+}
 
 #endif	/* _SOCK_H */

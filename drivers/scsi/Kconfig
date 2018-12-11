@@ -57,6 +57,25 @@ config SCSI_MQ_DEFAULT
 
 	  If unsure say N.
 
+config HISI_SCSI_VENDOR_CMD
+	bool "SCSI: vendor specific function"
+	depends on SCSI
+	default n
+
+config HISI_SCSI_VENDOR_CMD_HOTCOLD
+	bool "SCSI: use hot-cold data separation"
+	depends on HISI_SCSI_VENDOR_CMD
+	default n
+config HISI_SCSI_VENDOR_CMD_DEBUG
+	bool "SCSI: debug for vendor command, as hot-cold"
+	depends on HISI_SCSI_VENDOR_CMD
+	default n
+
+config HISI_SCSI_VENDOR_CMD_TEST
+	bool "SCSI: test for vendor command, as hot-cold"
+	depends on HISI_SCSI_VENDOR_CMD
+	default n
+
 config SCSI_PROC_FS
 	bool "legacy /proc/scsi/ support"
 	depends on SCSI && PROC_FS

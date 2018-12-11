@@ -511,4 +511,15 @@ config AXP20X_POWER
 	  This driver provides support for the power supply features of
 	  AXP20x PMIC.
 
+
+config POWER_HISI
+        bool "hisilicon power charger/coul driver"
+        default n
+        help
+          support hisi power charger/coul driver
+
+if POWER_HISI
+source "drivers/power/hisi/Kconfig"
+endif
+
 endif # POWER_SUPPLY

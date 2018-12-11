@@ -38,6 +38,14 @@
 #include <sound/pcm_oss.h>
 #endif
 
+enum SND_TIMEOUT_TYPE {
+	SND_TIMEOUT_TYPE_WRITE_INTERVAL = 0,
+	SND_TIMEOUT_TYPE_WRITE_PROC,
+	SND_TIMEOUT_TYPE_READ_INTERVAL,
+	SND_TIMEOUT_TYPE_READ_PROC,
+	SND_TIMEOUT_TYPE_MAX,
+};
+
 /*
  *  Hardware (lowlevel) section
  */
@@ -129,6 +137,7 @@ struct snd_pcm_ops {
 #define SNDRV_PCM_RATE_96000		(1<<10)		/* 96000Hz */
 #define SNDRV_PCM_RATE_176400		(1<<11)		/* 176400Hz */
 #define SNDRV_PCM_RATE_192000		(1<<12)		/* 192000Hz */
+#define SNDRV_PCM_RATE_384000		(1<<13)		/* 384000Hz */
 
 #define SNDRV_PCM_RATE_CONTINUOUS	(1<<30)		/* continuous range */
 #define SNDRV_PCM_RATE_KNOT		(1<<31)		/* supports more non-continuos rates */
@@ -141,6 +150,8 @@ struct snd_pcm_ops {
 					 SNDRV_PCM_RATE_88200|SNDRV_PCM_RATE_96000)
 #define SNDRV_PCM_RATE_8000_192000	(SNDRV_PCM_RATE_8000_96000|SNDRV_PCM_RATE_176400|\
 					 SNDRV_PCM_RATE_192000)
+#define SNDRV_PCM_RATE_8000_384000	(SNDRV_PCM_RATE_8000_192000|SNDRV_PCM_RATE_384000)
+
 #define _SNDRV_PCM_FMTBIT(fmt)		(1ULL << (__force int)SNDRV_PCM_FORMAT_##fmt)
 #define SNDRV_PCM_FMTBIT_S8		_SNDRV_PCM_FMTBIT(S8)
 #define SNDRV_PCM_FMTBIT_U8		_SNDRV_PCM_FMTBIT(U8)
@@ -422,6 +433,7 @@ struct snd_pcm_runtime {
 	/* -- OSS things -- */
 	struct snd_pcm_oss_runtime oss;
 #endif
+	long pre_time;
 };
 
 struct snd_pcm_group {		/* keep linked substreams */

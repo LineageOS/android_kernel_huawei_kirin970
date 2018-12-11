@@ -12,6 +12,9 @@
 #include "sched.h"
 
 DEFINE_PER_CPU(struct update_util_data *, cpufreq_update_util_data);
+#ifdef CONFIG_HISI_CPUFREQ
+DEFINE_PER_CPU(rwlock_t, update_util_data_lock);
+#endif
 
 /**
  * cpufreq_add_update_util_hook - Populate the CPU's update_util_data pointer.
@@ -35,14 +38,31 @@ void cpufreq_add_update_util_hook(int cpu, struct update_util_data *data,
 			void (*func)(struct update_util_data *data, u64 time,
 				     unsigned int flags))
 {
+#ifdef CONFIG_HISI_CPUFREQ
+	unsigned long flags;
+	rwlock_t *lock = &per_cpu(update_util_data_lock, cpu);
+#endif
+
 	if (WARN_ON(!data || !func))
 		return;
 
+#ifdef CONFIG_HISI_CPUFREQ
+	write_lock_irqsave(lock, flags);
+	if (WARN_ON(per_cpu(cpufreq_update_util_data, cpu))) {
+		write_unlock_irqrestore(lock, flags);
+		return;
+	}
+
+	data->func = func;
+	per_cpu(cpufreq_update_util_data, cpu) = data;
+	write_unlock_irqrestore(lock, flags);
+#else
 	if (WARN_ON(per_cpu(cpufreq_update_util_data, cpu)))
 		return;
 
 	data->func = func;
 	rcu_assign_pointer(per_cpu(cpufreq_update_util_data, cpu), data);
+#endif
 }
 EXPORT_SYMBOL_GPL(cpufreq_add_update_util_hook);
 
@@ -58,6 +78,15 @@ EXPORT_SYMBOL_GPL(cpufreq_add_update_util_hook);
  */
 void cpufreq_remove_update_util_hook(int cpu)
 {
+#ifdef CONFIG_HISI_CPUFREQ
+	unsigned long flags;
+	rwlock_t *lock = &per_cpu(update_util_data_lock, cpu);
+
+	write_lock_irqsave(lock, flags);
+	per_cpu(cpufreq_update_util_data, cpu) = NULL;
+	write_unlock_irqrestore(lock, flags);
+#else
 	rcu_assign_pointer(per_cpu(cpufreq_update_util_data, cpu), NULL);
+#endif
 }
 EXPORT_SYMBOL_GPL(cpufreq_remove_update_util_hook);

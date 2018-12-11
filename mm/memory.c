@@ -75,7 +75,12 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_HW_MEMORY_MONITOR
+#include <chipset_common/mmonitor/mmonitor.h>
+#endif
+
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
+
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
 #endif
 
@@ -1967,6 +1972,164 @@ int apply_to_page_range(struct mm_struct *mm, unsigned long addr,
 }
 EXPORT_SYMBOL_GPL(apply_to_page_range);
 
+static phys_addr_t late_pgtable_alloc(void)
+{
+	void *ptr = (void *)__get_free_page(PGALLOC_GFP);
+
+	if (!ptr || !pgtable_page_ctor(virt_to_page(ptr)))
+		BUG();
+
+	/* Ensure the zeroed page is visible to the page table walker */
+	dsb(ishst);
+	return __pa(ptr);
+}
+
+static void change_pte_range(pmd_t *pmd, phys_addr_t phys,
+			    unsigned long addr, unsigned long end,
+			    pgprot_t prot)
+{
+	pte_t *pte;
+	unsigned long pfn = __phys_to_pfn(phys);
+
+	if (pmd_none(*pmd) || pmd_sect(*pmd)) {
+		phys_addr_t pte_phys;
+
+		/* we must release lock before pgtable address alloc */
+		spin_unlock(&init_mm.page_table_lock);
+		pte_phys = late_pgtable_alloc();
+		spin_lock(&init_mm.page_table_lock);
+
+		pte = pte_set_fixmap(pte_phys);
+		if (pmd_sect(*pmd)) {
+			unsigned long pfn = pmd_pfn(*pmd);
+			int i = 0;
+
+			do {
+				set_pte(pte, pfn_pte(pfn, PAGE_KERNEL));
+				pfn++;
+			} while (pte++, i++, i < PTRS_PER_PTE);
+		}
+		__pmd_populate(pmd, pte_phys, PMD_TYPE_TABLE);
+		flush_tlb_all();
+		pte_clear_fixmap();
+	}
+
+	BUG_ON(pmd_bad(*pmd));
+
+	pte = pte_set_fixmap_offset(pmd, addr);
+
+	do {
+		set_pte(pte, pfn_pte(pfn, prot));
+		pfn++;
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+
+	pte_clear_fixmap();
+}
+
+static void change_pmd_range(pud_t *pud, phys_addr_t phys,
+			    unsigned long addr, unsigned long end,
+			    pgprot_t prot)
+{
+	pmd_t *pmd;
+	pmd_t old_pmd;
+	unsigned long next;
+
+	if (pud_none(*pud) || pud_sect(*pud)) {
+		phys_addr_t pmd_phys;
+
+		/* we must release lock before pgtable address alloc */
+		spin_unlock(&init_mm.page_table_lock);
+		pmd_phys = late_pgtable_alloc();
+		spin_lock(&init_mm.page_table_lock);
+
+		pmd = pmd_set_fixmap(pmd_phys);
+		if (pud_sect(*pud)) {
+			unsigned long addr = pud_pfn(*pud) << PAGE_SHIFT;
+			pgprot_t prot = __pgprot(pud_val(*pud) ^ addr);
+			int i = 0;
+
+			do {
+				set_pmd(pmd, __pmd(addr | pgprot_val(prot)));
+				addr += PMD_SIZE;
+			} while (pmd++, i++, i < PTRS_PER_PMD);
+		}
+		__pud_populate(pud, pmd_phys, PUD_TYPE_TABLE);
+		flush_tlb_all();
+		pmd_clear_fixmap();
+	}
+
+	BUG_ON(pud_bad(*pud));
+
+	pmd = pmd_set_fixmap_offset(pud, addr);
+
+	do {
+		next = pmd_addr_end(addr, end);
+		old_pmd = *pmd;
+
+		if (((addr | next | phys) & ~SECTION_MASK) == 0 &&
+		    !pmd_table(old_pmd))
+			pmd_set_huge(pmd, phys, prot);
+		else
+			change_pte_range(pmd, phys, addr, next, prot);
+
+		phys += next - addr;
+	} while (pmd++, addr = next, addr != end);
+
+	pmd_clear_fixmap();
+}
+
+static void change_pud_range(pgd_t *pgd, phys_addr_t phys,
+			    unsigned long addr, unsigned long end,
+			    pgprot_t prot)
+{
+	pud_t *pud;
+	unsigned long next;
+
+	BUG_ON(pgd_bad(*pgd));
+
+	pud = pud_set_fixmap_offset(pgd, addr);
+
+	do {
+		next = pud_addr_end(addr, end);
+		if (((addr | next | phys) & ~PUD_MASK) == 0 && pud_sect(*pud))
+			pud_set_huge(pud, phys, prot);
+		else
+			change_pmd_range(pud, phys, addr, next, prot);
+
+		phys += next - addr;
+	} while (pud++, addr = next, addr != end);
+
+	pud_clear_fixmap();
+}
+
+/*
+ * Set normal memory to device memory
+ */
+void change_secpage_range(phys_addr_t phys, unsigned long addr,
+		      unsigned long size, pgprot_t prot)
+{
+	pgd_t *pgd;
+	unsigned long next;
+	unsigned long end = addr + size;
+
+	if (WARN_ON(addr >= end))
+		return;
+
+	if (!PAGE_ALIGNED(phys) || !PAGE_ALIGNED(addr) || !PAGE_ALIGNED(size))
+		return;
+
+	spin_lock(&init_mm.page_table_lock);
+	pgd = pgd_offset(&init_mm, addr);
+
+	do {
+		next = pgd_addr_end(addr, end);
+		change_pud_range(pgd, phys, addr, next, prot);
+		phys += next - addr;
+	} while (pgd++, addr = next, addr != end);
+
+	spin_unlock(&init_mm.page_table_lock);
+}
+
 /*
  * handle_pte_fault chooses page fault handler according to an entry which was
  * read non-atomically.  Before making any commitment, on those architectures
@@ -2160,7 +2323,7 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
 		if (!new_page)
 			goto oom;
 	} else {
-		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
+		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE | ___GFP_CMA, vma,
 				fe->address);
 		if (!new_page)
 			goto oom;
@@ -2545,6 +2708,11 @@ int do_swap_page(struct fault_env *fe, pte_t orig_pte)
 		goto out;
 	}
 	delayacct_set_flag(DELAYACCT_PF_SWAPIN);
+#ifdef CONFIG_HW_MEMORY_MONITOR
+	if (current->delays)
+		__delayacct_blkio_start();
+	count_mmonitor_event(FILE_CACHE_MAP_COUNT);
+#endif
 	page = lookup_swap_cache(entry);
 	if (!page) {
 		page = swapin_readahead(entry,
@@ -2558,6 +2726,10 @@ int do_swap_page(struct fault_env *fe, pte_t orig_pte)
 					fe->address, &fe->ptl);
 			if (likely(pte_same(*fe->pte, orig_pte)))
 				ret = VM_FAULT_OOM;
+#ifdef CONFIG_HW_MEMORY_MONITOR
+			if (current->delays)
+				__delayacct_blkio_end();
+#endif
 			delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 			goto unlock;
 		}
@@ -2572,6 +2744,10 @@ int do_swap_page(struct fault_env *fe, pte_t orig_pte)
 		 * owner processes (which may be unknown at hwpoison time)
 		 */
 		ret = VM_FAULT_HWPOISON;
+#ifdef CONFIG_HW_MEMORY_MONITOR
+		if (current->delays)
+			__delayacct_blkio_end();
+#endif
 		delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 		swapcache = page;
 		goto out_release;
@@ -2579,7 +2755,10 @@ int do_swap_page(struct fault_env *fe, pte_t orig_pte)
 
 	swapcache = page;
 	locked = lock_page_or_retry(page, vma->vm_mm, fe->flags);
-
+#ifdef CONFIG_HW_MEMORY_MONITOR
+	if (current->delays)
+		__delayacct_blkio_end();
+#endif
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 	if (!locked) {
 		ret |= VM_FAULT_RETRY;
@@ -2698,6 +2877,7 @@ out_release:
 	}
 	return ret;
 }
+EXPORT_SYMBOL(do_swap_page);
 
 /*
  * We enter with non-exclusive mmap_sem (to exclude vma changes,
@@ -3033,7 +3213,7 @@ int alloc_set_pte(struct fault_env *fe, struct mem_cgroup *memcg,
 }
 
 static unsigned long fault_around_bytes __read_mostly =
-	rounddown_pow_of_two(65536);
+	rounddown_pow_of_two(4096);
 
 #ifdef CONFIG_DEBUG_FS
 static int fault_around_bytes_get(void *data, u64 *val)
@@ -3195,7 +3375,7 @@ static int do_cow_fault(struct fault_env *fe, pgoff_t pgoff)
 	if (unlikely(anon_vma_prepare(vma)))
 		return VM_FAULT_OOM;
 
-	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, fe->address);
+	new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE | ___GFP_CMA, vma, fe->address);
 	if (!new_page)
 		return VM_FAULT_OOM;
 

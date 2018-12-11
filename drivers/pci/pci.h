@@ -351,4 +351,8 @@ static inline int pci_dev_specific_reset(struct pci_dev *dev, int probe)
 }
 #endif
 
+#ifdef CONFIG_PCIE_KIRIN
+extern int kirin_pcie_ep_off(u32 rc_idx);
+#endif
+
 #endif /* DRIVERS_PCI_H */

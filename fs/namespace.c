@@ -24,6 +24,7 @@
 #include <linux/magic.h>
 #include <linux/bootmem.h>
 #include <linux/task_work.h>
+#include <linux/hisi/pagecache_manage.h>
 #include "pnode.h"
 #include "internal.h"
 
@@ -1524,6 +1525,8 @@ static int do_umount(struct mount *mnt, int flags)
 	struct super_block *sb = mnt->mnt.mnt_sb;
 	int retval;
 
+	umounting_fs_register_pch(sb);
+
 	retval = security_sb_umount(&mnt->mnt, flags);
 	if (retval)
 		return retval;
@@ -1610,6 +1613,7 @@ static int do_umount(struct mount *mnt, int flags)
 	}
 	unlock_mount_hash();
 	namespace_unlock();
+	umounted_fs_register_pch(sb);
 	return retval;
 }
 
@@ -2527,6 +2531,9 @@ static int do_new_mount(struct path *path, const char *fstype, int flags,
 	err = do_add_mount(real_mount(mnt), path, mnt_flags);
 	if (err)
 		mntput(mnt);
+	else
+		mount_fs_register_pch(mnt);
+
 	return err;
 }
 

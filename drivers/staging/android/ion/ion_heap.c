@@ -22,6 +22,8 @@
 #include <linux/sched.h>
 #include <linux/scatterlist.h>
 #include <linux/vmalloc.h>
+#include <linux/hisi/ion-iommu.h>
+
 #include "ion.h"
 #include "ion_priv.h"
 
@@ -101,6 +103,31 @@ int ion_heap_map_user(struct ion_heap *heap, struct ion_buffer *buffer,
 			return 0;
 	}
 	return 0;
+}
+
+int ion_heap_map_iommu(struct ion_buffer *buffer,
+			struct ion_iommu_map *map_data)
+{
+	struct sg_table *table = buffer->sg_table;
+	int ret;
+
+	ret = hisi_iommu_map_domain(table->sgl, &map_data->format);
+	if (ret) {
+		pr_err("%s: iommu map failed, heap: %s\n", __func__,
+			buffer->heap->name);
+	}
+	return ret;
+}
+
+void ion_heap_unmap_iommu(struct ion_iommu_map *map_data)
+{
+	int ret;
+
+	ret = hisi_iommu_unmap_domain(&map_data->format);
+	if (ret) {
+		pr_err("%s: iommu unmap failed, heap: %s\n", __func__,
+			map_data->buffer->heap->name);
+	}
 }
 
 static int ion_heap_clear_pages(struct page **pages, int num, pgprot_t pgprot)
@@ -321,8 +348,9 @@ struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 
 	switch (heap_data->type) {
 	case ION_HEAP_TYPE_SYSTEM_CONTIG:
-		heap = ion_system_contig_heap_create(heap_data);
-		break;
+		pr_err("%s: Heap type is disabled: %d\n", __func__,
+		       heap_data->type);
+		return ERR_PTR(-EINVAL);
 	case ION_HEAP_TYPE_SYSTEM:
 		heap = ion_system_heap_create(heap_data);
 		break;
@@ -335,6 +363,22 @@ struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 	case ION_HEAP_TYPE_DMA:
 		heap = ion_cma_heap_create(heap_data);
 		break;
+#ifdef CONFIG_ION_HISI_SECCM
+	case ION_HEAP_TYPE_SECCM:
+		heap = ion_seccm_heap_create(heap_data);
+		break;
+#endif
+
+#ifdef CONFIG_ION_HISI_SECSG
+	case ION_HEAP_TYPE_SECSG:
+		heap = ion_secsg_heap_create(heap_data);
+		break;
+#endif
+#ifdef CONFIG_ION_HISI_DMA_POOL
+	case ION_HEAP_TYPE_DMA_POOL:
+		heap = ion_dma_pool_heap_create(heap_data);
+		break;
+#endif
 	default:
 		pr_err("%s: Invalid heap type %d\n", __func__,
 		       heap_data->type);
@@ -361,7 +405,8 @@ void ion_heap_destroy(struct ion_heap *heap)
 
 	switch (heap->type) {
 	case ION_HEAP_TYPE_SYSTEM_CONTIG:
-		ion_system_contig_heap_destroy(heap);
+		pr_err("%s: Heap type is disabled: %d\n", __func__,
+		       heap->type);
 		break;
 	case ION_HEAP_TYPE_SYSTEM:
 		ion_system_heap_destroy(heap);
@@ -375,6 +420,21 @@ void ion_heap_destroy(struct ion_heap *heap)
 	case ION_HEAP_TYPE_DMA:
 		ion_cma_heap_destroy(heap);
 		break;
+#ifdef CONFIG_ION_HISI_SECCM
+	case ION_HEAP_TYPE_SECCM:
+		ion_seccm_heap_destroy(heap);
+		break;
+#endif
+#ifdef CONFIG_ION_HISI_SECSG
+	case ION_HEAP_TYPE_SECSG:
+		ion_secsg_heap_destroy(heap);
+		break;
+#endif
+#ifdef CONFIG_ION_HISI_DMA_POOL
+	case ION_HEAP_TYPE_DMA_POOL:
+		ion_dma_pool_heap_destroy(heap);
+		break;
+#endif
 	default:
 		pr_err("%s: Invalid heap type %d\n", __func__,
 		       heap->type);

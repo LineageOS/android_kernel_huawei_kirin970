@@ -293,13 +293,10 @@ static void debug_object_is_on_stack(void *addr, int onstack)
 		return;
 
 	limit++;
-	if (is_on_stack) {
-		pr_warn("object %p is on stack %p, but NOT annotated\n", addr,
-				task_stack_page(current));
-	} else {
-		pr_warn("object %p is NOT on stack %p, but annotated\n", addr,
-				task_stack_page(current));
-	}
+	if (is_on_stack)
+		pr_warn("object is on stack, but not annotated\n");
+	else
+		pr_warn("object is not on stack, but annotated\n");
 	WARN_ON(1);
 }
 

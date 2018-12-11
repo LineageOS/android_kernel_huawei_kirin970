@@ -106,8 +106,7 @@ static inline void check_msg(struct check *c, const char *fmt, ...)
 	va_list ap;
 	va_start(ap, fmt);
 
-	if ((c->warn && (quiet < 1))
-	    || (c->error && (quiet < 2))) {
+	if (c->error && (quiet < 2)) {
 		fprintf(stderr, "%s (%s): ",
 			(c->error) ? "ERROR" : "Warning", c->name);
 		vfprintf(stderr, fmt, ap);

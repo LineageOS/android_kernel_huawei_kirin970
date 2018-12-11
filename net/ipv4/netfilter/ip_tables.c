@@ -30,7 +30,7 @@
 #include <linux/netfilter_ipv4/ip_tables.h>
 #include <net/netfilter/nf_log.h>
 #include "../../netfilter/xt_repldata.h"
-
+#include <huawei_platform/power/wifi_filter/wifi_filter.h>
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
 MODULE_DESCRIPTION("IPv4 packet filter");
@@ -333,6 +333,11 @@ ipt_do_table(struct sk_buff *skb,
 				/* Pop from stack? */
 				if (v != XT_RETURN) {
 					verdict = (unsigned int)(-v) - 1;
+					#ifdef CONFIG_DOZE_FILTER
+					if (NF_DROP == verdict) {
+						get_filter_info(skb,state,hook,private,e);
+					}
+					#endif
 					break;
 				}
 				if (stackidx == 0) {

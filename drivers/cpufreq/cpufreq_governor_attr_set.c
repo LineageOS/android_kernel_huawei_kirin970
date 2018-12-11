@@ -26,7 +26,10 @@ static ssize_t governor_show(struct kobject *kobj, struct attribute *attr,
 {
 	struct governor_attr *gattr = to_gov_attr(attr);
 
-	return gattr->show(to_gov_attr_set(kobj), buf);
+	if (gattr->show)
+		return gattr->show(to_gov_attr_set(kobj), buf);
+
+	return -EIO;
 }
 
 static ssize_t governor_store(struct kobject *kobj, struct attribute *attr,

@@ -23,6 +23,8 @@
 #include <linux/vmalloc.h>
 #include "ion.h"
 #include "ion_priv.h"
+#include <linux/hisi/hisi_ion.h>
+#include <linux/platform_device.h>
 
 struct ion_chunk_heap {
 	struct ion_heap heap;
@@ -97,6 +99,7 @@ static void ion_chunk_heap_free(struct ion_buffer *buffer)
 		container_of(heap, struct ion_chunk_heap, heap);
 	struct sg_table *table = buffer->sg_table;
 	struct scatterlist *sg;
+	struct platform_device *hisi_ion_dev = get_hisi_ion_platform_device();
 	int i;
 	unsigned long allocated_size;
 
@@ -105,7 +108,7 @@ static void ion_chunk_heap_free(struct ion_buffer *buffer)
 	ion_heap_buffer_zero(buffer);
 
 	if (ion_buffer_cached(buffer))
-		dma_sync_sg_for_device(NULL, table->sgl, table->nents,
+		dma_sync_sg_for_device(&hisi_ion_dev->dev, table->sgl, table->nents,
 				       DMA_BIDIRECTIONAL);
 
 	for_each_sg(table->sgl, sg, table->nents, i) {

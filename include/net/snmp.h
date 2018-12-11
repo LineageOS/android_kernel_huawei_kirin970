@@ -98,6 +98,13 @@ struct tcp_mib {
 	unsigned long	mibs[TCP_MIB_MAX];
 };
 
+#ifdef CONFIG_HW_WIFIPRO
+#define WIFIPRO_TCP_MIB_MAX	__WIFIPRO_TCP_MIB_MAX
+struct wifipro_tcp_mib {
+	unsigned long	mibs[WIFIPRO_TCP_MIB_MAX];
+};
+#endif
+
 /* UDP */
 #define UDP_MIB_MAX	__UDP_MIB_MAX
 struct udp_mib {

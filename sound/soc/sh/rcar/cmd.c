@@ -82,9 +82,6 @@ static int rsnd_cmd_init(struct rsnd_mod *mod,
 			[9] = 0x2,
 		};
 
-		if (unlikely(!src))
-			return -EIO;
-
 		data = path[rsnd_mod_id(src)] |
 			cmd_case[rsnd_mod_id(src)] << 16;
 	}

@@ -1079,7 +1079,11 @@ struct cfg80211_tid_stats {
  *	(IEEE80211_NUM_TIDS) index for MSDUs not encapsulated in QoS-MPDUs.
  */
 struct station_info {
+#ifdef CONFIG_HW_GET_EXT_SIG
 	u64 filled;
+#else
+	u32 filled;
+#endif
 	u32 connected_time;
 	u32 inactive_time;
 	u64 rx_bytes;
@@ -1121,6 +1125,11 @@ struct station_info {
 	u64 rx_duration;
 	u8 rx_beacon_signal_avg;
 	struct cfg80211_tid_stats pertid[IEEE80211_NUM_TIDS + 1];
+#ifdef CONFIG_HW_GET_EXT_SIG
+	s32 noise;
+	s32 snr;
+	s32 chload;
+#endif
 };
 
 #if IS_ENABLED(CONFIG_CFG80211)
@@ -2638,7 +2647,7 @@ struct cfg80211_nan_func {
  *
  * @start_p2p_device: Start the given P2P device.
  * @stop_p2p_device: Stop the given P2P device.
- *
+ * @get_p2p_tx_rate: get linkspeed for the  P2P device.
  * @set_mac_acl: Sets MAC address control list in AP and P2P GO mode.
  *	Parameters include ACL policy, an array of MAC address of stations
  *	and the number of MAC addresses. If there is already a list in driver
@@ -2928,6 +2937,10 @@ struct cfg80211_ops {
 				    struct wireless_dev *wdev);
 	void	(*stop_p2p_device)(struct wiphy *wiphy,
 				   struct wireless_dev *wdev);
+#ifdef CONFIG_HW_GET_P2P_TX_RATE
+	int	(*get_p2p_tx_rate)(struct wiphy *wiphy, struct net_device *dev,
+			       struct station_info *sinfo);
+#endif /* CONFIG_HW_GET_P2P_TX_RATE */
 
 	int	(*set_mac_acl)(struct wiphy *wiphy, struct net_device *dev,
 			       const struct cfg80211_acl_data *params);
@@ -3041,6 +3054,7 @@ enum wiphy_flags {
 	WIPHY_FLAG_4ADDR_STATION		= BIT(6),
 	WIPHY_FLAG_CONTROL_PORT_PROTOCOL	= BIT(7),
 	WIPHY_FLAG_IBSS_RSN			= BIT(8),
+	WIPHY_FLAG_SUPPORTS_DFS_OFFLOAD		= BIT(9),
 	WIPHY_FLAG_MESH_AUTH			= BIT(10),
 	WIPHY_FLAG_SUPPORTS_SCHED_SCAN		= BIT(11),
 	/* use hole at 12 */
@@ -5074,6 +5088,28 @@ void cfg80211_roamed_bss(struct net_device *dev, struct cfg80211_bss *bss,
 void cfg80211_disconnected(struct net_device *dev, u16 reason,
 			   const u8 *ie, size_t ie_len,
 			   bool locally_generated, gfp_t gfp);
+#ifdef CONFIG_HW_VOWIFI
+/**
+ * cfg80211_drv_vowifi - notification of vowifi event
+ *
+ * @dev: network device
+ * @gfp: allocation flags
+ *
+ */
+void cfg80211_drv_vowifi(struct net_device *dev, gfp_t gfp);
+#endif
+
+#ifdef CONFIG_HW_ABS
+/**
+ * cfg80211_drv_ant - notification of ant event
+ *
+ * @dev: network device
+ * @gfp: allocation flags
+ *
+ */
+void cfg80211_drv_ant(struct net_device *dev, gfp_t gfp);
+#endif
+
 
 /**
  * cfg80211_ready_on_channel - notification of remain_on_channel start

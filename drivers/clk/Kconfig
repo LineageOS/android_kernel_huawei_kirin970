@@ -6,6 +6,15 @@ config CLKDEV_LOOKUP
 config HAVE_CLK_PREPARE
 	bool
 
+config HISI_CLK_DEBUG
+	bool "Clock Debug driver for ARM Reference designs"
+	---help---
+	  Clock Debug driver for ARM Reference designs.
+
+config HISI_CLK_TRACE
+	bool "Clock Debug driver for CLK TRACE"
+	default n
+
 config COMMON_CLK
 	bool
 	select HAVE_CLK_PREPARE
@@ -200,10 +209,14 @@ config COMMON_CLK_OXNAS
 
 source "drivers/clk/bcm/Kconfig"
 source "drivers/clk/hisilicon/Kconfig"
+source "drivers/clk/qcom/Kconfig"
+endmenu
+
 source "drivers/clk/mediatek/Kconfig"
 source "drivers/clk/meson/Kconfig"
+source "drivers/clk/hisi/Kconfig"
+source "drivers/clk/hisi/peri_dvfs/Kconfig"
 source "drivers/clk/mvebu/Kconfig"
-source "drivers/clk/qcom/Kconfig"
 source "drivers/clk/renesas/Kconfig"
 source "drivers/clk/samsung/Kconfig"
 source "drivers/clk/sunxi-ng/Kconfig"
@@ -211,4 +224,3 @@ source "drivers/clk/tegra/Kconfig"
 source "drivers/clk/ti/Kconfig"
 source "drivers/clk/uniphier/Kconfig"
 
-endmenu

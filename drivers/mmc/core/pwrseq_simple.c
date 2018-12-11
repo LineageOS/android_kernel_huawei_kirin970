@@ -42,7 +42,7 @@ static void mmc_pwrseq_simple_set_gpios_value(struct mmc_pwrseq_simple *pwrseq,
 		int i;
 		int values[reset_gpios->ndescs];
 
-		for (i = 0; i < reset_gpios->ndescs; i++)
+		for (i = 0; i < reset_gpios->ndescs; i++)/*lint !e574*/
 			values[i] = value;
 
 		gpiod_set_array_value_cansleep(
@@ -100,21 +100,25 @@ static int mmc_pwrseq_simple_probe(struct platform_device *pdev)
 {
 	struct mmc_pwrseq_simple *pwrseq;
 	struct device *dev = &pdev->dev;
+	int ret = 0;
 
 	pwrseq = devm_kzalloc(dev, sizeof(*pwrseq), GFP_KERNEL);
 	if (!pwrseq)
 		return -ENOMEM;
 
 	pwrseq->ext_clk = devm_clk_get(dev, "ext_clock");
-	if (IS_ERR(pwrseq->ext_clk) && PTR_ERR(pwrseq->ext_clk) != -ENOENT)
-		return PTR_ERR(pwrseq->ext_clk);
+	if (IS_ERR(pwrseq->ext_clk) && PTR_ERR(pwrseq->ext_clk) != -ENOENT) {
+		ret =  PTR_ERR(pwrseq->ext_clk);
+		goto free;
+		}
 
 	pwrseq->reset_gpios = devm_gpiod_get_array(dev, "reset",
 							GPIOD_OUT_HIGH);
 	if (IS_ERR(pwrseq->reset_gpios) &&
 	    PTR_ERR(pwrseq->reset_gpios) != -ENOENT &&
 	    PTR_ERR(pwrseq->reset_gpios) != -ENOSYS) {
-		return PTR_ERR(pwrseq->reset_gpios);
+		ret = PTR_ERR(pwrseq->reset_gpios);
+		goto clk_put;
 	}
 
 	device_property_read_u32(dev, "post-power-on-delay-ms",
@@ -125,7 +129,13 @@ static int mmc_pwrseq_simple_probe(struct platform_device *pdev)
 	pwrseq->pwrseq.owner = THIS_MODULE;
 	platform_set_drvdata(pdev, pwrseq);
 
-	return mmc_pwrseq_register(&pwrseq->pwrseq);
+	return mmc_pwrseq_register(&pwrseq->pwrseq);/*lint !e429*/
+clk_put:
+	if (!IS_ERR(pwrseq->ext_clk))
+		clk_put(pwrseq->ext_clk);
+free:
+	devm_kfree(dev, pwrseq);
+	return ret;
 }
 
 static int mmc_pwrseq_simple_remove(struct platform_device *pdev)

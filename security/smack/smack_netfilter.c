@@ -57,7 +57,7 @@ static unsigned int smack_ipv4_output(void *priv,
 	return NF_ACCEPT;
 }
 
-static struct nf_hook_ops smack_nf_ops[] = {
+static struct nf_hook_ops smack_nf_ops[] HISI_RO_LSM_HOOKS = {
 	{
 		.hook =		smack_ipv4_output,
 		.pf =		NFPROTO_IPV4,

@@ -992,7 +992,8 @@ static int srpt_init_ch_qp(struct srpt_rdma_ch *ch, struct ib_qp *qp)
 		return -ENOMEM;
 
 	attr->qp_state = IB_QPS_INIT;
-	attr->qp_access_flags = IB_ACCESS_LOCAL_WRITE;
+	attr->qp_access_flags = IB_ACCESS_LOCAL_WRITE | IB_ACCESS_REMOTE_READ |
+	    IB_ACCESS_REMOTE_WRITE;
 	attr->port_num = ch->sport->port;
 	attr->pkey_index = 0;
 
@@ -2292,8 +2293,12 @@ static void srpt_queue_response(struct se_cmd *cmd)
 	}
 	spin_unlock_irqrestore(&ioctx->spinlock, flags);
 
-	if (unlikely(WARN_ON_ONCE(state == SRPT_STATE_CMD_RSP_SENT)))
+	if (unlikely(transport_check_aborted_status(&ioctx->cmd, false)
+		     || WARN_ON_ONCE(state == SRPT_STATE_CMD_RSP_SENT))) {
+		atomic_inc(&ch->req_lim_delta);
+		srpt_abort_cmd(ioctx);
 		return;
+	}
 
 	/* For read commands, transfer the data to the initiator. */
 	if (ioctx->cmd.data_direction == DMA_FROM_DEVICE &&
@@ -2666,8 +2671,7 @@ static void srpt_release_cmd(struct se_cmd *se_cmd)
 	struct srpt_rdma_ch *ch = ioctx->ch;
 	unsigned long flags;
 
-	WARN_ON_ONCE(ioctx->state != SRPT_STATE_DONE &&
-		     !(ioctx->cmd.transport_state & CMD_T_ABORTED));
+	WARN_ON(ioctx->state != SRPT_STATE_DONE);
 
 	if (ioctx->n_rw_ctx) {
 		srpt_free_rw_ctxs(ch, ioctx);

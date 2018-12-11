@@ -708,7 +708,11 @@ static void _remove_opp_dev(struct opp_device *opp_dev,
 			    struct opp_table *opp_table)
 {
 	opp_debug_unregister(opp_dev, opp_table);
+#ifdef CONFIG_HISI_CPUFREQ
 	list_del_rcu(&opp_dev->node);
+#else
+	list_del(&opp_dev->node);
+#endif
 	call_srcu(&opp_table->srcu_head.srcu, &opp_dev->rcu_head,
 		  _kfree_opp_dev_rcu);
 }

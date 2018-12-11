@@ -52,7 +52,7 @@
 #include <net/dst_metadata.h>
 #include <net/dst.h>
 #include <net/sock_reuseport.h>
-
+#include <huawei_platform/power/wifi_filter/wifi_filter.h>
 /**
  *	sk_filter_trim_cap - run a packet through a socket filter
  *	@sk: sock associated with &sk_buff
@@ -80,8 +80,12 @@ int sk_filter_trim_cap(struct sock *sk, struct sk_buff *skb, unsigned int cap)
 		return -ENOMEM;
 
 	err = BPF_CGROUP_RUN_PROG_INET_INGRESS(sk, skb);
-	if (err)
+	if (err) {
+		#ifdef CONFIG_DOZE_FILTER
+		get_filter_infoEx(skb);
+		#endif
 		return err;
+	}
 
 	err = security_sock_rcv_skb(sk, skb);
 	if (err)

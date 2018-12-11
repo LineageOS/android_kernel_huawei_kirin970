@@ -28,9 +28,12 @@
 #include <uapi/linux/gpio.h>
 
 #include "gpiolib.h"
-
 #define CREATE_TRACE_POINTS
 #include <trace/events/gpio.h>
+
+#ifdef CONFIG_GPIO_PL061
+#include "hisi_gpio.h"
+#endif
 
 /* Implementation infrastructure for GPIO interfaces.
  *
@@ -151,15 +154,18 @@ EXPORT_SYMBOL_GPL(gpiod_to_chip);
 static int gpiochip_find_base(int ngpio)
 {
 	struct gpio_device *gdev;
-	int base = ARCH_NR_GPIOS - ngpio;
+	int base = 0;
 
 	list_for_each_entry_reverse(gdev, &gpio_devices, list) {
 		/* found a free space? */
 		if (gdev->base + gdev->ngpio <= base)
 			break;
-		else
+		else{
 			/* nope, check the space right before the chip */
-			base = gdev->base - ngpio;
+			base = gdev->base + ngpio;
+			if (base > ARCH_NR_GPIOS)
+				return -ENOSPC;
+		}
 	}
 
 	if (gpio_is_valid(base)) {
@@ -425,7 +431,7 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 	struct gpiohandle_request handlereq;
 	struct linehandle_state *lh;
 	struct file *file;
-	int fd, i, ret;
+	int fd, i, count = 0, ret;
 
 	if (copy_from_user(&handlereq, ip, sizeof(handlereq)))
 		return -EFAULT;
@@ -471,6 +477,7 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 		if (ret)
 			goto out_free_descs;
 		lh->descs[i] = desc;
+		count = i;
 
 		if (lflags & GPIOHANDLE_REQUEST_ACTIVE_LOW)
 			set_bit(FLAG_ACTIVE_LOW, &desc->flags);
@@ -537,7 +544,7 @@ static int linehandle_create(struct gpio_device *gdev, void __user *ip)
 out_put_unused_fd:
 	put_unused_fd(fd);
 out_free_descs:
-	for (; i >= 0; i--)
+	for (i = 0; i < count; i++)
 		gpiod_free(lh->descs[i]);
 	kfree(lh->label);
 out_free_lh:
@@ -794,7 +801,7 @@ static int lineevent_create(struct gpio_device *gdev, void __user *ip)
 	desc = &gdev->descs[offset];
 	ret = gpiod_request(desc, le->label);
 	if (ret)
-		goto out_free_desc;
+		goto out_free_label;
 	le->desc = desc;
 	le->eflags = eflags;
 
@@ -1821,6 +1828,11 @@ static inline void gpiochip_irqchip_free_valid_mask(struct gpio_chip *gpiochip)
  */
 int gpiochip_generic_request(struct gpio_chip *chip, unsigned offset)
 {
+#ifdef CONFIG_GPIO_PL061
+	struct pl061_gpio *gc = container_of(chip, struct pl061_gpio, gc);
+	if (pl061_check_security_status(gc))
+		return -EBUSY;
+#endif
 	return pinctrl_request_gpio(chip->gpiodev->base + offset);
 }
 EXPORT_SYMBOL_GPL(gpiochip_generic_request);
@@ -1832,6 +1844,11 @@ EXPORT_SYMBOL_GPL(gpiochip_generic_request);
  */
 void gpiochip_generic_free(struct gpio_chip *chip, unsigned offset)
 {
+#ifdef CONFIG_GPIO_PL061
+	struct pl061_gpio *gc = container_of(chip, struct pl061_gpio, gc);
+	if (pl061_check_security_status(gc))
+		return;
+#endif
 	pinctrl_free_gpio(chip->gpiodev->base + offset);
 }
 EXPORT_SYMBOL_GPL(gpiochip_generic_free);
@@ -2223,7 +2240,11 @@ int gpiod_direction_input(struct gpio_desc *desc)
 	return status;
 }
 EXPORT_SYMBOL_GPL(gpiod_direction_input);
-
+int gpio_direction_input(unsigned gpio)
+{
+	return gpiod_direction_input(gpio_to_desc(gpio));
+}
+EXPORT_SYMBOL_GPL(gpio_direction_input);
 static int _gpiod_direction_output_raw(struct gpio_desc *desc, int value)
 {
 	struct gpio_chip *gc = desc->gdev->chip;
@@ -2300,6 +2321,11 @@ int gpiod_direction_output_raw(struct gpio_desc *desc, int value)
 	return _gpiod_direction_output_raw(desc, value);
 }
 EXPORT_SYMBOL_GPL(gpiod_direction_output_raw);
+int gpio_direction_output(unsigned gpio, int value)
+{
+	return gpiod_direction_output_raw(gpio_to_desc(gpio), value);
+}
+EXPORT_SYMBOL_GPL(gpio_direction_output);
 
 /**
  * gpiod_direction_output - set the GPIO direction to output
@@ -3203,6 +3229,8 @@ struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
 	struct gpio_desc *desc = NULL;
 	int status;
 	enum gpio_lookup_flags lookupflags = 0;
+	/* Maybe we have a device name, maybe not */
+	const char *devname = dev ? dev_name(dev) : "?";
 
 	dev_dbg(dev, "GPIO lookup for consumer %s\n", con_id);
 
@@ -3231,8 +3259,11 @@ struct gpio_desc *__must_check gpiod_get_index(struct device *dev,
 		return desc;
 	}
 
-	/* If a connection label was passed use that, else use the device name as label */
-	status = gpiod_request(desc, con_id ? con_id : dev_name(dev));
+	/*
+	 * If a connection label was passed use that, else attempt to use
+	 * the device name as label
+	 */
+	status = gpiod_request(desc, con_id ? con_id : devname);
 	if (status < 0)
 		return ERR_PTR(status);
 

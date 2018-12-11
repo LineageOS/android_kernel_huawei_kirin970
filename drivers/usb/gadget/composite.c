@@ -150,6 +150,8 @@ int config_ep_by_speed(struct usb_gadget *g,
 			struct usb_function *f,
 			struct usb_ep *_ep)
 {
+
+	
 	struct usb_endpoint_descriptor *chosen_desc = NULL;
 	struct usb_descriptor_header **speed_desc = NULL;
 
@@ -160,6 +162,7 @@ int config_ep_by_speed(struct usb_gadget *g,
 
 	if (!g || !f || !_ep)
 		return -EIO;
+
 
 	/* select desired speed */
 	switch (g->speed) {
@@ -439,6 +442,7 @@ static u8 encode_bMaxPower(enum usb_device_speed speed,
 		return 0;
 	switch (speed) {
 	case USB_SPEED_SUPER:
+	case USB_SPEED_SUPER_PLUS:
 		return DIV_ROUND_UP(val, 8);
 	default:
 		return DIV_ROUND_UP(val, 2);
@@ -701,7 +705,7 @@ static int bos_desc(struct usb_composite_dev *cdev)
 		 *   LP  =  1 (SuperSpeedPlus)
 		 *   LSM = 10 (10 Gbps)
 		 */
-		ssp_cap->bmSublinkSpeedAttr[1] =
+		ssp_cap->bmSublinkSpeedAttr[1] = /*[false alarm]:it is a false alarm*/
 			cpu_to_le32((3 << 4) | (1 << 14) |
 				    (0xa << 16) | (1 << 7));
 	}
@@ -966,7 +970,6 @@ static void remove_config(struct usb_composite_dev *cdev,
 			/* may free memory for "f" */
 		}
 	}
-	list_del(&config->list);
 	if (config->unbind) {
 		DBG(cdev, "unbind config '%s'/%p\n", config->label, config);
 		config->unbind(config);
@@ -992,6 +995,9 @@ void usb_remove_config(struct usb_composite_dev *cdev,
 
 	if (cdev->config == config)
 		reset_config(cdev);
+
+	if (!list_empty(&cdev->configs))
+		list_del(&config->list);
 
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
@@ -1376,7 +1382,7 @@ static void composite_setup_complete(struct usb_ep *ep, struct usb_request *req)
 	else if (cdev->os_desc_req == req)
 		cdev->os_desc_pending = false;
 	else
-		WARN(1, "unknown request %p\n", req);
+		WARN(1, "unknown request %pK\n", req);
 }
 
 static int composite_ep0_queue(struct usb_composite_dev *cdev,
@@ -1391,7 +1397,7 @@ static int composite_ep0_queue(struct usb_composite_dev *cdev,
 		else if (cdev->os_desc_req == req)
 			cdev->os_desc_pending = true;
 		else
-			WARN(1, "unknown request %p\n", req);
+			WARN(1, "unknown request %pK\n", req);
 	}
 
 	return ret;
@@ -1995,7 +2001,7 @@ void composite_disconnect(struct usb_gadget *gadget)
 	struct usb_composite_dev	*cdev = get_gadget_data(gadget);
 	unsigned long			flags;
 
-	if (cdev == NULL) {
+	if (!cdev) {
 		WARN(1, "%s: Calling disconnect on a Gadget that is \
 			 not connected\n", __func__);
 		return;
@@ -2041,6 +2047,7 @@ static void __composite_unbind(struct usb_gadget *gadget, bool unbind_driver)
 		struct usb_configuration	*c;
 		c = list_first_entry(&cdev->configs,
 				struct usb_configuration, list);
+		list_del(&c->list);
 		remove_config(cdev, c);
 	}
 	if (cdev->driver->unbind && unbind_driver)

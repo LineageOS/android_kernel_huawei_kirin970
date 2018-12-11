@@ -18,285 +18,989 @@
  * the Free Software Foundation; either version 2 of the License, or (at
  * your option) any later version.
  */
-
-#include <linux/clk-provider.h>
-#include <linux/mfd/syscon.h>
+/*lint --e{750}*/
+#include <linux/bootdevice.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
-#include <linux/phy/phy.h>
-#include <linux/regmap.h>
 #include "sdhci-pltfm.h"
+#include <linux/dma-mapping.h>
+#include <linux/delay.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/of_address.h>
+#include <linux/mmc/mmc.h>
+#include <linux/slab.h>
+#include <linux/scatterlist.h>
+#include <linux/mmc/cmdq_hci.h>
+#include <linux/pm_runtime.h>
+#include <linux/mmc/card.h>
+#include <soc_pmctrl_interface.h>
+#include <linux/regulator/consumer.h>
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+#include <linux/mmc/mmc.h>
+#include <linux/mmc/sdio.h>
+#include <linux/mmc/sd.h>
+#include <linux/mmc/dsm_emmc.h>
+#include <linux/workqueue.h>
+#endif
+#ifndef LINUX_VERSION_CODE
+#include <linux/version.h>
+#endif
+#define DRIVER_NAME "sdhci-arasan"
 
-#define SDHCI_ARASAN_VENDOR_REGISTER	0x78
+#define CLK_CTRL_TIMEOUT_SHIFT		16
+#define CLK_CTRL_TIMEOUT_MASK		(0xf << CLK_CTRL_TIMEOUT_SHIFT)
+#define CLK_CTRL_TIMEOUT_MIN_EXP	13
 
-#define VENDOR_ENHANCED_STROBE		BIT(0)
+#define SDHCI_ARASAN_MIN_FREQ				400000
+#define SDHCI_ARASAN_AHB_CLK_FREQ			120000000
+#define SDHCI_ARASAN_XIN_CLK_FREQ			200000000
 
-#define PHY_CLK_TOO_SLOW_HZ		400000
+#define PERI_CRG_RSTEN4   			(0x90)
+#define PERI_CRG_RSTDIS4  			(0x94)
+#define PERI_CRG_RSTSTAT4			(0x98)
 
-/*
- * On some SoCs the syscon area has a feature where the upper 16-bits of
- * each 32-bit register act as a write mask for the lower 16-bits.  This allows
- * atomic updates of the register without locking.  This macro is used on SoCs
- * that have that feature.
- */
-#define HIWORD_UPDATE(val, mask, shift) \
-		((val) << (shift) | (mask) << ((shift) + 16))
+#define HOST_DRV_STRENGTH_40		0x4/*host default drv strength 40ohm*/
 
-/**
- * struct sdhci_arasan_soc_ctl_field - Field used in sdhci_arasan_soc_ctl_map
- *
- * @reg:	Offset within the syscon of the register containing this field
- * @width:	Number of bits for this field
- * @shift:	Bit offset within @reg of this field (or -1 if not avail)
- */
-struct sdhci_arasan_soc_ctl_field {
-	u32 reg;
-	u16 width;
-	s16 shift;
-};
+#define PERI_CRG_RST_EMMC0_BIT			(0x1 << 16)
+static void __iomem *pericrg_base = NULL;
 
-/**
- * struct sdhci_arasan_soc_ctl_map - Map in syscon to corecfg registers
- *
- * It's up to the licensee of the Arsan IP block to make these available
- * somewhere if needed.  Presumably these will be scattered somewhere that's
- * accessible via the syscon API.
- *
- * @baseclkfreq:	Where to find corecfg_baseclkfreq
- * @clockmultiplier:	Where to find corecfg_clockmultiplier
- * @hiword_update:	If true, use HIWORD_UPDATE to access the syscon
- */
-struct sdhci_arasan_soc_ctl_map {
-	struct sdhci_arasan_soc_ctl_field	baseclkfreq;
-	struct sdhci_arasan_soc_ctl_field	clockmultiplier;
-	bool					hiword_update;
-};
+static u32 xin_clk = SDHCI_ARASAN_XIN_CLK_FREQ;
+static u32 ahb_clk = SDHCI_ARASAN_AHB_CLK_FREQ;
+
+static u32 hs400_dll_freq_data = 0x1;
+static u32 hs400_tx_phase = 0x6;
+
+static u32 emmc0_rst = PERI_CRG_RST_EMMC0_BIT;
+
+struct sdhci_host *g_sdhci_for_mmctrace;
+extern void sdhci_dumpregs(struct sdhci_host *host);
+
 
 /**
  * struct sdhci_arasan_data
- * @host:		Pointer to the main SDHCI host structure.
- * @clk_ahb:		Pointer to the AHB clock
- * @phy:		Pointer to the generic phy
- * @is_phy_on:		True if the PHY is on; false if not.
- * @sdcardclk_hw:	Struct for the clock we might provide to a PHY.
- * @sdcardclk:		Pointer to normal 'struct clock' for sdcardclk_hw.
- * @soc_ctl_base:	Pointer to regmap for syscon for soc_ctl registers.
- * @soc_ctl_map:	Map to get offsets into soc_ctl registers.
+ * @clk:						Pointer to the sd clock
+ * @clk_ahb:					Pointer to the AHB clock
+ * @clock:					record current clock rate
+ * @tuning_current_sample:		record current sample when soft tuning
+ * @tuning_init_sample:			record the optimum sample of soft tuning
+ * @tuning_sample_count:		record the tuning count for soft tuning
+ * @tuning_move_sample:		record the move sample when data or cmd error occor
+ * @tuning_move_count:		record the move count
+ * @tuning_sample_flag:			record the sample OK or NOT of soft tuning
+ * @tuning_strobe_init_sample:	default strobe sample
+ * @tuning_strobe_move_sample:	record the strobe move sample when data or cmd error occor
+ * @tuning_strobe_move_count:	record the strobe move count
  */
 struct sdhci_arasan_data {
-	struct sdhci_host *host;
-	struct clk	*clk_ahb;
-	struct phy	*phy;
-	bool		is_phy_on;
-
-	struct clk_hw	sdcardclk_hw;
-	struct clk      *sdcardclk;
-
-	struct regmap	*soc_ctl_base;
-	const struct sdhci_arasan_soc_ctl_map *soc_ctl_map;
-	unsigned int	quirks; /* Arasan deviations from spec */
-
-/* Controller does not have CD wired and will not function normally without */
-#define SDHCI_ARASAN_QUIRK_FORCE_CDTEST	BIT(0)
+	struct clk *clk;
+	struct clk *clk_ahb;
+	unsigned int clock;
+	unsigned int enhanced_strobe_enabled;
+	int tuning_current_sample;
+	int tuning_init_sample;
+	int tuning_sample_count;
+	int tuning_move_sample;
+	int tuning_move_count;
+	unsigned long tuning_sample_flag;
+	int tuning_strobe_init_sample;
+	int tuning_strobe_move_sample;
+	int tuning_strobe_move_count;
+	u32 host_drv_strength;
+	u32 dev_drv_strength;
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+	u64 para;
+	u32 cmd_data_status;
+	void *data;
+	struct work_struct dsm_work;
+#endif
 };
 
-static const struct sdhci_arasan_soc_ctl_map rk3399_soc_ctl_map = {
-	.baseclkfreq = { .reg = 0xf000, .width = 8, .shift = 8 },
-	.clockmultiplier = { .reg = 0xf02c, .width = 8, .shift = 0},
-	.hiword_update = true,
-};
 
-/**
- * sdhci_arasan_syscon_write - Write to a field in soc_ctl registers
- *
- * This function allows writing to fields in sdhci_arasan_soc_ctl_map.
- * Note that if a field is specified as not available (shift < 0) then
- * this function will silently return an error code.  It will be noisy
- * and print errors for any other (unexpected) errors.
- *
- * @host:	The sdhci_host
- * @fld:	The field to write to
- * @val:	The value to write
- */
-static int sdhci_arasan_syscon_write(struct sdhci_host *host,
-				   const struct sdhci_arasan_soc_ctl_field *fld,
-				   u32 val)
+void sdhci_arasan_dumpregs(struct sdhci_host *host)
 {
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	struct regmap *soc_ctl_base = sdhci_arasan->soc_ctl_base;
-	u32 reg = fld->reg;
-	u16 width = fld->width;
-	s16 shift = fld->shift;
-	int ret;
+	pr_info(DRIVER_NAME ": En Strobe: 0x%08x\n",
+		sdhci_readw(host, SDHCI_ENHANCED_STROBE_EBABLE));
+	pr_info(DRIVER_NAME ": Dbg Reg0: 0x%08x | Reg1: 0x%08x\n",
+		sdhci_readl(host, SDHCI_DEBUG_REG0),
+		sdhci_readl(host, SDHCI_DEBUG_REG1));
+	pr_info(DRIVER_NAME ": Dbg Reg2: 0x%08x | Reg3: 0x%08x\n",
+		sdhci_readl(host, SDHCI_DEBUG_REG2),
+		sdhci_readl(host, SDHCI_DEBUG_REG3));
+	pr_info(DRIVER_NAME ": PHY Ctrl1: 0x%08x | Ctrl2: 0x%08x\n",
+		sdhci_readl(host, SDHCI_PHY_CTRL1),
+		sdhci_readl(host,  SDHCI_PHY_CTRL2));
+	pr_info(DRIVER_NAME ": PHY Ctrl3: 0x%08x | Status: 0x%08x\n",
+		sdhci_readl(host, SDHCI_PHY_CTRL3),
+		sdhci_readl(host,  SDHCI_PHY_STATUS));
+	return;
+}
 
-	/*
-	 * Silently return errors for shift < 0 so caller doesn't have
-	 * to check for fields which are optional.  For fields that
-	 * are required then caller needs to do something special
-	 * anyway.
-	 */
-	if (shift < 0)
-		return -EINVAL;
+void __iomem *iosoc_acpu_pmc_base_addr = NULL;
+static int sdhci_get_pmctrl_resocure(void)
+{
+	struct device_node *np = NULL;
+	np = of_find_compatible_node(NULL, NULL, "hisilicon,clk-pmctrl");
+	if (!np) {
+		pr_err("can't find clk-pmctrl!\n");
+		return -1;
+	} else {
+		iosoc_acpu_pmc_base_addr = of_iomap(np, 0);
+	}
+	if (!iosoc_acpu_pmc_base_addr) {
+		pr_err("clk-pmctrl iomap error!\n");
+		return -1;
+	}
+	return 0;
+}
 
-	if (sdhci_arasan->soc_ctl_map->hiword_update)
-		ret = regmap_write(soc_ctl_base, reg,
-				   HIWORD_UPDATE(val, GENMASK(width, 0),
-						 shift));
-	else
-		ret = regmap_update_bits(soc_ctl_base, reg,
-					 GENMASK(shift + width, shift),
-					 val << shift);
+static void sdhci_set_strobe_sample(struct sdhci_host *host, unsigned char timing, int sam_phase);
 
-	/* Yell about (unexpected) regmap errors */
-	if (ret)
-		pr_warn("%s: Regmap write fail: %d\n",
-			 mmc_hostname(host->mmc), ret);
-
-	return ret;
+static unsigned int sdhci_arasan_get_min_clock(struct sdhci_host *host)
+{
+	return SDHCI_ARASAN_MIN_FREQ;
 }
 
 static unsigned int sdhci_arasan_get_timeout_clock(struct sdhci_host *host)
 {
+	u32 div;
 	unsigned long freq;
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
 
-	/* SDHCI timeout clock is in kHz */
-	freq = DIV_ROUND_UP(clk_get_rate(pltfm_host->clk), 1000);
+	div = sdhci_readl(host, SDHCI_CLOCK_CONTROL);
+	div = (div & CLK_CTRL_TIMEOUT_MASK) >> CLK_CTRL_TIMEOUT_SHIFT;
 
-	/* or in MHz */
-	if (host->caps & SDHCI_TIMEOUT_CLK_UNIT)
-		freq = DIV_ROUND_UP(freq, 1000);
+	freq = clk_get_rate(sdhci_arasan->clk);
+	freq /= 1 << (CLK_CTRL_TIMEOUT_MIN_EXP + div);/*lint !e573 !e647*/
+
+	pr_debug("%s: freq=%lx\n", __func__, freq);
 
 	return freq;
 }
 
-static void sdhci_arasan_set_clock(struct sdhci_host *host, unsigned int clock)
+static void sdhci_of_arasan_hardware_reset(struct sdhci_host *host, unsigned char set)
+{
+	unsigned int loop_count;
+
+	if (pericrg_base == NULL) {
+		pr_err("%s: pericrg_base is null, can't reset mmc!\n", __func__);
+		return;
+	}
+
+	if (set) {					/* eMMC0 reset */
+		writel(emmc0_rst, pericrg_base + PERI_CRG_RSTEN4);
+		loop_count = 0xF;
+		do {
+			if (emmc0_rst & readl(pericrg_base + PERI_CRG_RSTSTAT4)) {
+				break;
+			}
+			loop_count--;
+		} while (loop_count);
+		if (!loop_count)
+			pr_err("wait eMMC0 reset time out!\n");
+		else
+			pr_info("%s: rest emmc ok!\n", __func__);
+	} else {					/* eMMC0 dis-reset */
+		writel(emmc0_rst, pericrg_base + PERI_CRG_RSTDIS4);
+		loop_count = 0xF;
+		do {
+			if (!(emmc0_rst & readl(pericrg_base + PERI_CRG_RSTSTAT4))) {
+				break;
+			}
+			loop_count--;
+		} while (loop_count);
+		if (!loop_count)
+			pr_err("wait eMMC0 unreset time out!\n");
+		else
+			pr_info("%s: unrest emmc ok!\n", __func__);
+	}
+}
+
+static void sdhci_of_arasan_PHY_set_dll(struct sdhci_host *host, u32 dll_freq_sel)
+{
+	u32 reg_data = 0;
+	unsigned long loop_count = 0;
+
+	if (dll_freq_sel == 0xff) {
+		/*disable dll */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+		reg_data = reg_data & (~SDHCI_PHY_CTRL1_EN_DLL);
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+		udelay(10);
+		/*enable dll */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+		reg_data = reg_data | SDHCI_PHY_CTRL1_EN_DLL;
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+		udelay(10);
+		/*disable dll */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+		reg_data = reg_data & (~SDHCI_PHY_CTRL1_EN_DLL);
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+	} else {
+		/*disable dll */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+		reg_data = reg_data & (~SDHCI_PHY_CTRL1_EN_DLL);
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+		udelay(10);
+		/*set dll freq */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+		reg_data = reg_data & (~(SDHCI_PHY_CTRL3_DLL_FREQ_SEL_MASK << SDHCI_PHY_CTRL3_DLL_FREQ_SEL));
+		reg_data = reg_data | ((dll_freq_sel & SDHCI_PHY_CTRL3_DLL_FREQ_SEL_MASK) << SDHCI_PHY_CTRL3_DLL_FREQ_SEL);
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+
+		/*enable dll */
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+		reg_data = reg_data | SDHCI_PHY_CTRL1_EN_DLL;
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+		/*need to delay 10us after enable dll*/
+		udelay(10);
+
+		loop_count = 0x1000;	/*100us for 1GHz cpu */
+		do {
+			if (SDHCI_PHY_STATUS_DLLRDY & sdhci_readl(host, SDHCI_PHY_STATUS)) {
+				break;
+			}
+			loop_count--;
+		} while (loop_count);
+		if (!loop_count)
+			pr_err("%s: wait DLL ready time out!\n", __func__);
+
+
+		pr_debug("%s: enable dll done\n", __func__);
+	}
+}
+
+static void sdhci_of_arasan_PHY_init(struct sdhci_host *host)
+{
+	u32 reg_data;
+	unsigned long loop_count = 0;
+
+	/*  PHY initialization */
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+	reg_data = reg_data | SDHCI_PHY_CTRL1_EN_RTRIM;
+	reg_data = reg_data & (~(SDHCI_PHY_CTRL1_DLL_TRIM_ICP_MASK << SDHCI_PHY_CTRL1_DLL_TRIM_ICP));
+	reg_data = reg_data | ((0x4 & SDHCI_PHY_CTRL1_DLL_TRIM_ICP_MASK) << SDHCI_PHY_CTRL1_DLL_TRIM_ICP);
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+	reg_data = reg_data | SDHCI_PHY_CTRL1_PDB;
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+	loop_count = 0x1000;		/*100us for 1GHz cpu */
+	do {
+		if (SDHCI_PHY_STATUS_CALDONE & sdhci_readl(host, SDHCI_PHY_STATUS)) {
+			break;
+		}
+		loop_count--;
+	} while (loop_count);
+	if (!loop_count)
+		pr_err("wait CALDONE time out!\n");
+
+	loop_count = 0xF;
+	do {
+		if (!(SDHCI_PHY_STATUS_EXR_NINST & sdhci_readl(host, SDHCI_PHY_STATUS))) {
+			break;
+		}
+		loop_count--;
+	} while (loop_count);
+	if (!loop_count)
+		pr_err("wait EXR_NINST time out!\n");
+
+}
+
+static void sdhci_of_arasan_platform_init(struct sdhci_host *host)
+{
+	u32 reg_data;
+
+	sdhci_of_arasan_PHY_init(host);
+
+	/* configure OD enable */
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+	reg_data = reg_data | SDHCI_PHY_CTRL1_ODEN_CMD;
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+	reg_data = 0;
+	reg_data = reg_data | (0xFF << SDHCI_PHY_CTRL2_ODEN_DAT);
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL2);
+
+	pr_debug("%s: end!\n", __func__);
+}
+
+static int sdhci_disable_open_drain(struct sdhci_host *host)
+{
+	u32 reg_data;
+
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+	reg_data = reg_data & (~SDHCI_PHY_CTRL1_ODEN_CMD);
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+	/*enable data cmd pull up, strobe pull down. */
+	reg_data = 0x003FF7FC;
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL2);
+
+	pr_debug("%s\n", __func__);
+	return 0;
+}
+
+static int sdhci_of_arasan_enable_enhanced_strobe(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	bool ctrl_phy = false;
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
 
-	if (!IS_ERR(sdhci_arasan->phy)) {
-		if (!sdhci_arasan->is_phy_on && clock <= PHY_CLK_TOO_SLOW_HZ) {
-			/*
-			 * If PHY off, set clock to max speed and power PHY on.
-			 *
-			 * Although PHY docs apparently suggest power cycling
-			 * when changing the clock the PHY doesn't like to be
-			 * powered on while at low speeds like those used in ID
-			 * mode.  Even worse is powering the PHY on while the
-			 * clock is off.
-			 *
-			 * To workaround the PHY limitations, the best we can
-			 * do is to power it on at a faster speed and then slam
-			 * through low speeds without power cycling.
-			 */
-			sdhci_set_clock(host, host->max_clk);
-			spin_unlock_irq(&host->lock);
-			phy_power_on(sdhci_arasan->phy);
-			spin_lock_irq(&host->lock);
-			sdhci_arasan->is_phy_on = true;
+	sdhci_writew(host, 0x1, SDHCI_ENHANCED_STROBE_EBABLE);
+	sdhci_arasan->enhanced_strobe_enabled = 1;
+	return 0;
+}
 
-			/*
-			 * We'll now fall through to the below case with
-			 * ctrl_phy = false (so we won't turn off/on).  The
-			 * sdhci_set_clock() will set the real clock.
-			 */
-		} else if (clock > PHY_CLK_TOO_SLOW_HZ) {
-			/*
-			 * At higher clock speeds the PHY is fine being power
-			 * cycled and docs say you _should_ power cycle when
-			 * changing clock speeds.
-			 */
-			ctrl_phy = true;
+static u32 freq_sel_efuse_enable = 0;
+static u32 freq_sel_efuse_value = 0;
+#define FREQ_SEL_CMDLINE_ENABLE_BIT	(1 << 4)
+#define FREQ_SEL_CMDLINE_VALUE_MASK	(0x7)
+
+static int __init early_parse_emmc_freqsel_cmdline(char *arg)
+{
+	char cmdline_buf[11];
+	u32 len = 0;
+	int value = 0;
+
+	if (arg) {
+		memset(cmdline_buf, 0, sizeof(cmdline_buf));
+		len = strlen(arg);
+		if (len >= sizeof(cmdline_buf))
+			len = sizeof(cmdline_buf) - 1;
+		memcpy(cmdline_buf, arg, len);
+		value = (int)simple_strtol(cmdline_buf, NULL, 0);
+		freq_sel_efuse_enable = ! !(value & FREQ_SEL_CMDLINE_ENABLE_BIT);
+		freq_sel_efuse_value = value & FREQ_SEL_CMDLINE_VALUE_MASK;
+		pr_err("eMMC freq_sel cmdline, enable:0x%x, value:0x%x\n", freq_sel_efuse_enable, freq_sel_efuse_value);
+	} else {
+		pr_err("no eMMC freq_sel cmdline\n");
+	}
+	return 0;
+}
+
+early_param("emmc_freqsel", early_parse_emmc_freqsel_cmdline);
+static void sdhci_of_arasan_update_phy_control(struct sdhci_host *host, unsigned char timing)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	u32 reg_data = 0;
+	u32 dll_freq_data = 0xff;
+	u32 tx_phase = 0xff;
+	u32 rx_phase = 0xff;
+	u32 drv_strength = 0x0;
+	u32 strb_sel = 0xff;
+	u8 enable_ES = 0;
+	static unsigned char old_bus_mode = MMC_BUSMODE_OPENDRAIN;
+
+	pr_debug("%s: timing=%d, host->clock=%d\n", __func__, timing, host->clock);
+/*
+DLL支持50MHz 到 200MHz时钟配置。0: 200-170MHz, 1: 170-140MHz, 2: 140-110MHz, 3: 110-80MHz, 4: 80-50MHz, 7: 200-225MHz
+*/
+	if ((host->clock <= 200000000) && (host->clock >= 190000000)) {
+		if (freq_sel_efuse_enable)
+			dll_freq_data = freq_sel_efuse_value;
+		else
+			dll_freq_data = hs400_dll_freq_data;
+	} else if ((host->clock < 190000000) && (host->clock >= 170000000)) {
+		dll_freq_data = 0x0;
+	} else if ((host->clock < 170000000) && (host->clock >= 140000000)) {
+		dll_freq_data = 0x1;
+	} else if ((host->clock < 140000000) && (host->clock >= 110000000)) {
+		dll_freq_data = 0x2;
+	} else if ((host->clock < 110000000) && (host->clock >= 80000000)) {
+		dll_freq_data = 0x3;
+	} else if ((host->clock < 80000000) && (host->clock >= 50000000)) {
+		dll_freq_data = 0x4;
+	} else {
+		dll_freq_data = 0xff;
+		/*OD disable */
+		if ((host->clock > 0)
+			&& (old_bus_mode != MMC_BUSMODE_PUSHPULL)
+			&& (host->mmc->ios.bus_mode == MMC_BUSMODE_PUSHPULL)) {
+			sdhci_disable_open_drain(host);
+		}
+		old_bus_mode = host->mmc->ios.bus_mode;
+	}
+/*
+SDHCI_PHY_CTRL3_OTAPDLYENA:使能手动调整TX时钟相位
+SDHCI_PHY_CTRL3_OTAPDLYSEL:TX时钟相位:0-0xF，默认值0
+SDHCI_PHY_CTRL3_ITAPDLYENA:使能手动调整RX时钟相位,不使能使使用自动tuning的相位值
+初始化时软件配置为不使能
+SDHCI_PHY_CTRL3_ITAPDLYSEL:RX时钟相位:0-0x1F，默认值0
+SDHCI_PHY_CTRL1_DR_TY:阻抗值，驱动力调整，支持如下四种，默认值0x0
+0x0-50欧
+0x1-33欧驱动力最强
+0x2-66欧
+0x3-100欧驱动力最弱
+0x4-40欧
+*/
+	if (timing == MMC_TIMING_MMC_HS400) {
+		tx_phase = hs400_tx_phase;
+		rx_phase = sdhci_arasan->tuning_move_sample;
+		drv_strength = sdhci_arasan->host_drv_strength;
+		strb_sel = sdhci_arasan->tuning_strobe_move_sample;
+		if (sdhci_arasan->enhanced_strobe_enabled)
+			enable_ES = 1;
+	} else if (timing == MMC_TIMING_MMC_HS200) {
+		tx_phase = 0x7;
+		rx_phase = sdhci_arasan->tuning_move_sample;
+		drv_strength = sdhci_arasan->host_drv_strength;
+	} else if ((timing == MMC_TIMING_UHS_DDR50) || (timing == MMC_TIMING_MMC_DDR52)) {
+		tx_phase = 0x4;
+		rx_phase = 0x0;
+		drv_strength = sdhci_arasan->host_drv_strength;
+	} else if (timing == MMC_TIMING_MMC_HS) {
+		tx_phase = 0xff;
+		rx_phase = 0xff;
+		drv_strength = sdhci_arasan->host_drv_strength;
+		dll_freq_data = 0xff;
+	} else {
+		tx_phase = 0xff;
+		rx_phase = 0xff;
+		drv_strength = 0x0;
+		dll_freq_data = 0xff;
+	}
+
+/*set tx phase*/
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+	if (tx_phase == 0xff) {		/*disable tx phase */
+		reg_data = reg_data & (~SDHCI_PHY_CTRL3_OTAPDLYENA);
+	} else {
+		reg_data = reg_data | SDHCI_PHY_CTRL3_OTAPDLYENA;
+		reg_data = reg_data & (~(SDHCI_PHY_CTRL3_OTAPDLYSEL_MASK << SDHCI_PHY_CTRL3_OTAPDLYSEL));
+		reg_data = reg_data | ((tx_phase & SDHCI_PHY_CTRL3_OTAPDLYSEL_MASK) << SDHCI_PHY_CTRL3_OTAPDLYSEL);
+	}
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+	pr_debug("%s: set tx=0X%x phase done!\n", __func__, tx_phase);
+/*set rx phase*/
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+	if (rx_phase == 0xff) {		/*disable rx phase */
+		reg_data = reg_data & (~SDHCI_PHY_CTRL3_ITAPDLYENA);
+	} else {
+		reg_data = reg_data | SDHCI_PHY_CTRL3_ITAPDLYENA;
+		reg_data = reg_data & (~(SDHCI_PHY_CTRL3_ITAPDLYSEL_MASK << SDHCI_PHY_CTRL3_ITAPDLYSEL));
+		reg_data = reg_data | ((rx_phase & SDHCI_PHY_CTRL3_ITAPDLYSEL_MASK) << SDHCI_PHY_CTRL3_ITAPDLYSEL);
+	}
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+	pr_debug("%s: set rx=0X%x phase done!\n", __func__, rx_phase);
+/*set strbsel*/
+	sdhci_set_strobe_sample(host, timing, strb_sel);
+/*set drv strength*/
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL1);
+	reg_data = reg_data & (~(SDHCI_PHY_CTRL1_DR_TY_MASK << SDHCI_PHY_CTRL1_DR_TY));
+	reg_data = reg_data | ((drv_strength & SDHCI_PHY_CTRL1_DR_TY_MASK) << SDHCI_PHY_CTRL1_DR_TY);
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL1);
+	pr_debug("%s: config drv strength =0X%x done!\n", __func__, drv_strength);
+/*set dll*/
+	sdhci_of_arasan_PHY_set_dll(host, dll_freq_data);
+/*set enhanced strobe*/
+	if (enable_ES)
+		sdhci_writew(host, 0x1, SDHCI_ENHANCED_STROBE_EBABLE);
+	else
+		sdhci_writew(host, 0x0, SDHCI_ENHANCED_STROBE_EBABLE);
+}
+
+#define SDHCI_TUNING_MIN_SAMPLE		0
+#define SDHCI_TUNING_MAX_SAMPLE		31
+#define MAX_TUNING_LOOP 				32
+#define SDHCI_TUNING_COUNT			64
+#define SDHCI_TUNING_STROBE_MIN_SAMPLE		0
+#define SDHCI_TUNING_STROBE_MAX_SAMPLE		3
+
+/*to init tuning para before soft tuning*/
+static void sdhci_of_arasan_init_tuning_para(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	pr_err("%s enter\n", __func__);
+	sdhci_arasan->tuning_current_sample = -1;
+	sdhci_arasan->tuning_init_sample = 0xff;
+	sdhci_arasan->tuning_sample_count = 0;
+	sdhci_arasan->tuning_move_sample = 0xff;
+	sdhci_arasan->tuning_move_count = 0;
+	sdhci_arasan->tuning_strobe_init_sample = 0;	/* 0x0, 0x1, 0x2, 0x3 */
+	sdhci_arasan->tuning_strobe_move_sample = 0xff;
+	sdhci_arasan->tuning_strobe_move_count = 0;
+	sdhci_arasan->tuning_sample_flag = 0;
+}
+
+static void sdhci_set_strobe_sample(struct sdhci_host *host, unsigned char timing, int sam_phase)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	u32 reg_data = 0;
+	u32 sam_phase_set = 0;
+
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+	reg_data = reg_data & (~(SDHCI_PHY_CTRL3_STRBSEL_MASK << SDHCI_PHY_CTRL3_STRBSEL));
+	if (sam_phase == 0xff) {	/*use default strbsel 0x0 */
+		sam_phase_set = sdhci_arasan->tuning_strobe_init_sample;
+	} else {
+		sam_phase_set = sam_phase;
+	}
+	/* 0x0, 0x5, 0xa, 0xf */
+	sam_phase_set += (sam_phase_set << 2);
+	reg_data = reg_data | ((sam_phase_set & SDHCI_PHY_CTRL3_STRBSEL_MASK) << SDHCI_PHY_CTRL3_STRBSEL);
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+	pr_debug("%s: timing=%d, sam_phase_set=0X%x\n", __func__, timing, sam_phase_set);
+}
+
+static void sdhci_set_sample(struct sdhci_host *host, unsigned char timing, int sam_phase)
+{
+	u32 reg_data = 0;
+
+	pr_debug("%s: timing=%d,sam_phase=0X%x\n", __func__, timing, sam_phase);
+
+	reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+	if (sam_phase == 0xff) {
+		reg_data = reg_data & (~SDHCI_PHY_CTRL3_ITAPDLYENA);
+		reg_data = reg_data & (~(SDHCI_PHY_CTRL3_ITAPDLYSEL_MASK << SDHCI_PHY_CTRL3_ITAPDLYSEL));
+	} else {
+		reg_data = reg_data | SDHCI_PHY_CTRL3_ITAPDLYENA;
+		reg_data = reg_data | SDHCI_PHY_CTRL3_ITAPCHGWIN;
+		reg_data = reg_data & (~(SDHCI_PHY_CTRL3_ITAPDLYSEL_MASK << SDHCI_PHY_CTRL3_ITAPDLYSEL));
+		reg_data = reg_data | ((sam_phase & SDHCI_PHY_CTRL3_ITAPDLYSEL_MASK) << SDHCI_PHY_CTRL3_ITAPDLYSEL);
+		sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+		udelay(10);
+		reg_data = sdhci_readl(host, SDHCI_PHY_CTRL3);
+		reg_data = reg_data & (~SDHCI_PHY_CTRL3_ITAPCHGWIN);
+	}
+	sdhci_writel(host, reg_data, SDHCI_PHY_CTRL3);
+	pr_debug("%s: timing=%d,SDHCI_PHY_CTRL3=0X%x\n", __func__, timing, sdhci_readl(host, SDHCI_PHY_CTRL3));
+}
+
+static void sdhci_tuning_clear_flags(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	pr_debug("%s\n", __func__);
+	sdhci_arasan->tuning_sample_flag = (unsigned long)0;
+}
+
+static void sdhci_tuning_set_flags(struct sdhci_host *host, int sample, int ok)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	pr_debug("%s: tuning_sample_flag=0X%lx, sample = 0X%x, flag=0X%x\n", __func__, sdhci_arasan->tuning_sample_flag, sample, ok);
+	if (ok)
+		sdhci_arasan->tuning_sample_flag |= ((unsigned long)1 << sample);
+	else
+		sdhci_arasan->tuning_sample_flag &= ~((unsigned long)1 << sample);
+}
+
+/* By tuning, find the best timing condition
+ *  1 -- tuning is not finished. And this function should be called again
+ *  0 -- Tuning successfully.
+ *    If this function be called again, another round of tuning would be start
+ *  -1 -- Tuning failed. Maybe slow down the clock and call this function again
+ */
+static int sdhci_of_arasan_tuning_find_condition(struct sdhci_host *host, unsigned char timing)
+{
+	int i, j;
+	int ret = -1;
+	unsigned long mask;
+	int mask_lenth;
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	pr_debug("%s: timing is %d, tuning_current_sample = 0X%x, tuning_init_sample=0X%x\n", __func__, timing, sdhci_arasan->tuning_current_sample, sdhci_arasan->tuning_init_sample);
+
+	if (SDHCI_TUNING_MAX_SAMPLE == SDHCI_TUNING_MIN_SAMPLE) {
+		sdhci_arasan->tuning_init_sample = (SDHCI_TUNING_MAX_SAMPLE + SDHCI_TUNING_MIN_SAMPLE) / 2;
+		sdhci_set_sample(host, timing, sdhci_arasan->tuning_init_sample);
+		pr_debug("%s: no need tuning: timing is %d, tuning sample = %d\n", __func__, timing, sdhci_arasan->tuning_init_sample);
+		return 0;
+	}
+
+	if (-1 == sdhci_arasan->tuning_current_sample) {
+		sdhci_tuning_clear_flags(host);
+		/* set the first sam del as the min_sam_del */
+		sdhci_arasan->tuning_current_sample = SDHCI_TUNING_MIN_SAMPLE;
+		/* a trick for next "++" */
+		sdhci_arasan->tuning_current_sample--;
+	}
+
+	if (sdhci_arasan->tuning_sample_count >= MAX_TUNING_LOOP) {
+		/*use 0-31 fill 32-64 bits. */
+		sdhci_arasan->tuning_sample_flag |= ((sdhci_arasan->tuning_sample_flag & ((1UL << (SDHCI_TUNING_COUNT - MAX_TUNING_LOOP)) - 1)) << MAX_TUNING_LOOP);
+
+		/* tuning finish, select the best sam_del */
+		/* set sam del to -1, for next tuning */
+		sdhci_arasan->tuning_current_sample = -1;
+		sdhci_arasan->tuning_init_sample = 0xff;
+		for (mask_lenth = (((SDHCI_TUNING_COUNT - 1 - SDHCI_TUNING_MIN_SAMPLE) >> 1) << 1) + 1; mask_lenth >= 1; mask_lenth -= 2) {
+			mask = ((unsigned long)1 << mask_lenth) - 1;
+			for (i = (SDHCI_TUNING_MIN_SAMPLE + SDHCI_TUNING_COUNT - 1 - mask_lenth + 1) / 2, j = 1; (i <= SDHCI_TUNING_COUNT - 1 - mask_lenth + 1) && (i >= SDHCI_TUNING_MIN_SAMPLE); i = ((SDHCI_TUNING_MIN_SAMPLE + SDHCI_TUNING_COUNT - 1 - mask_lenth + 1) / 2) + ((j % 2) ? -1 : 1) * (j / 2)) {
+				if ((sdhci_arasan->tuning_sample_flag & (mask << i)) == (mask << i)) {
+					sdhci_arasan->tuning_init_sample = i + mask_lenth / 2;
+					break;
+				}
+
+				j++;
+			}
+			if (sdhci_arasan->tuning_init_sample != 0xff) {
+				if (sdhci_arasan->tuning_init_sample >= MAX_TUNING_LOOP) {
+					sdhci_arasan->tuning_init_sample = sdhci_arasan->tuning_init_sample - MAX_TUNING_LOOP;
+				}
+				pr_err("kernel tuning OK: timing is %d, tuning sample = %d, tuning_flag = 0x%lx\n", timing, sdhci_arasan->tuning_init_sample, sdhci_arasan->tuning_sample_flag);
+				ret = 0;
+				break;
+			}
+		}
+		if (ret) {
+			pr_err("tuning err: no good sam_del, " "timing is %d, tuning_init_sample=%d, tuning_flag = 0x%lx.\n", timing, sdhci_arasan->tuning_init_sample, sdhci_arasan->tuning_sample_flag);
+			ret = -1;
+			sdhci_set_sample(host, timing, sdhci_arasan->tuning_init_sample);
+		}
+		/* soft done, then still use auto tuning */
+		sdhci_set_sample(host, timing, 0xff);
+	} else {
+		sdhci_arasan->tuning_current_sample++;
+		sdhci_arasan->tuning_sample_count++;
+		if (sdhci_arasan->tuning_current_sample > SDHCI_TUNING_MAX_SAMPLE) {
+			sdhci_arasan->tuning_current_sample = SDHCI_TUNING_MIN_SAMPLE;
+		}
+		sdhci_set_sample(host, timing, sdhci_arasan->tuning_current_sample);
+		ret = 1;
+	}
+	return ret;
+}
+
+static void sdhci_of_arasan_tuning_set_current_state(struct sdhci_host *host, int ok)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	sdhci_tuning_set_flags(host, sdhci_arasan->tuning_sample_count - 1, ok);
+}
+
+static int sdhci_of_arasan_tuning_move_strobe(struct sdhci_host *host)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	int loop = 0;
+	int ret = 0;
+
+	/* first move tuning, set soft tuning optimum strobe sample. When second or more move tuning, use the sample near optimum sample */
+	for (loop = 0; loop < 2; loop++) {
+		sdhci_arasan->tuning_strobe_move_count++;
+		sdhci_arasan->tuning_strobe_move_sample = sdhci_arasan->tuning_strobe_init_sample + ((sdhci_arasan->tuning_strobe_move_count % 2) ? 1 : -1) * (sdhci_arasan->tuning_strobe_move_count / 2);
+
+		if ((sdhci_arasan->tuning_strobe_move_sample > SDHCI_TUNING_STROBE_MAX_SAMPLE) || (sdhci_arasan->tuning_strobe_move_sample < SDHCI_TUNING_STROBE_MIN_SAMPLE)) {
+			continue;
+		} else {
+			break;
 		}
 	}
-
-	if (ctrl_phy && sdhci_arasan->is_phy_on) {
-		spin_unlock_irq(&host->lock);
-		phy_power_off(sdhci_arasan->phy);
-		spin_lock_irq(&host->lock);
-		sdhci_arasan->is_phy_on = false;
+	if ((sdhci_arasan->tuning_strobe_move_sample > SDHCI_TUNING_STROBE_MAX_SAMPLE) || (sdhci_arasan->tuning_strobe_move_sample < SDHCI_TUNING_STROBE_MIN_SAMPLE)) {
+		pr_err("%s: tuning strobe move fail.\n", __func__);
+		sdhci_arasan->tuning_strobe_move_sample = 0xff;
+		ret = -1;
+	} else {
+		sdhci_set_strobe_sample(host, host->mmc->ios.timing, sdhci_arasan->tuning_strobe_move_sample);
+		pr_err("%s: tuning strobe move to sample=%d\n", __func__, sdhci_arasan->tuning_strobe_move_sample);
 	}
-
-	sdhci_set_clock(host, clock);
-
-	if (ctrl_phy) {
-		spin_unlock_irq(&host->lock);
-		phy_power_on(sdhci_arasan->phy);
-		spin_lock_irq(&host->lock);
-		sdhci_arasan->is_phy_on = true;
-	}
+	return ret;
 }
 
-static void sdhci_arasan_hs400_enhanced_strobe(struct mmc_host *mmc,
-					struct mmc_ios *ios)
+static int sdhci_of_arasan_tuning_move_clk(struct sdhci_host *host)
 {
-	u32 vendor;
-	struct sdhci_host *host = mmc_priv(mmc);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	int loop = 0;
+	int ret = 0;
 
-	vendor = readl(host->ioaddr + SDHCI_ARASAN_VENDOR_REGISTER);
-	if (ios->enhanced_strobe)
-		vendor |= VENDOR_ENHANCED_STROBE;
-	else
-		vendor &= ~VENDOR_ENHANCED_STROBE;
+	/* soft tuning fail or error then return error */
+	if (sdhci_arasan->tuning_init_sample > SDHCI_TUNING_MAX_SAMPLE) {
+		pr_err("%s: soft tuning fail, can not move tuning, tuning_init_sample=%d.\n", __func__, sdhci_arasan->tuning_init_sample);
+		return -1;
+	}
+	/* first move tuning, set soft tuning optimum sample. When second or more move tuning, use the sample near optimum sample */
+	for (loop = 0; loop < 2; loop++) {
+		sdhci_arasan->tuning_move_count++;
+		sdhci_arasan->tuning_move_sample = sdhci_arasan->tuning_init_sample + ((sdhci_arasan->tuning_move_count % 2) ? 1 : -1) * (sdhci_arasan->tuning_move_count / 2);
 
-	writel(vendor, host->ioaddr + SDHCI_ARASAN_VENDOR_REGISTER);
+		if ((sdhci_arasan->tuning_move_sample > SDHCI_TUNING_MAX_SAMPLE) || (sdhci_arasan->tuning_move_sample < SDHCI_TUNING_MIN_SAMPLE)) {
+			continue;
+		} else {
+			break;
+		}
+	}
+	if ((sdhci_arasan->tuning_move_sample > SDHCI_TUNING_MAX_SAMPLE) || (sdhci_arasan->tuning_move_sample < SDHCI_TUNING_MIN_SAMPLE)) {
+		pr_err("%s: tuning move fail.\n", __func__);
+		sdhci_arasan->tuning_move_sample = 0xff;
+		ret = -1;
+	} else {
+		sdhci_set_sample(host, host->mmc->ios.timing, sdhci_arasan->tuning_move_sample);
+		pr_err("%s: tuning move to sample=%d\n", __func__, sdhci_arasan->tuning_move_sample);
+	}
+	return ret;
 }
 
-static void sdhci_arasan_reset(struct sdhci_host *host, u8 mask)
+/*
+struct sdhci_host *host	:	sdhci host point.
+int is_move_strobe		:	1-move strobe phase; 0-move clk phase.
+int flag				:	1-reset move_count; 0-tuning move without reset.
+*/
+static int sdhci_of_arasan_tuning_move(struct sdhci_host *host, int is_move_strobe, int flag)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	/* set tuning_strobe_move_count to 0, next tuning move will begin from optimum sample */
+	if (flag) {
+		sdhci_arasan->tuning_move_count = 0;
+		sdhci_arasan->tuning_strobe_move_count = 0;
+		return 0;
+	}
+
+	if (is_move_strobe) {
+		return sdhci_of_arasan_tuning_move_strobe(host);
+	} else {
+		return sdhci_of_arasan_tuning_move_clk(host);
+	}
+}
+
+static const u8 tuning_blk_pattern_4bit[] = {
+	0xff, 0x0f, 0xff, 0x00, 0xff, 0xcc, 0xc3, 0xcc,
+	0xc3, 0x3c, 0xcc, 0xff, 0xfe, 0xff, 0xfe, 0xef,
+	0xff, 0xdf, 0xff, 0xdd, 0xff, 0xfb, 0xff, 0xfb,
+	0xbf, 0xff, 0x7f, 0xff, 0x77, 0xf7, 0xbd, 0xef,
+	0xff, 0xf0, 0xff, 0xf0, 0x0f, 0xfc, 0xcc, 0x3c,
+	0xcc, 0x33, 0xcc, 0xcf, 0xff, 0xef, 0xff, 0xee,
+	0xff, 0xfd, 0xff, 0xfd, 0xdf, 0xff, 0xbf, 0xff,
+	0xbb, 0xff, 0xf7, 0xff, 0xf7, 0x7f, 0x7b, 0xde,
+};
+
+static const u8 tuning_blk_pattern_8bit[] = {
+	0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00,
+	0xff, 0xff, 0xcc, 0xcc, 0xcc, 0x33, 0xcc, 0xcc,
+	0xcc, 0x33, 0x33, 0xcc, 0xcc, 0xcc, 0xff, 0xff,
+	0xff, 0xee, 0xff, 0xff, 0xff, 0xee, 0xee, 0xff,
+	0xff, 0xff, 0xdd, 0xff, 0xff, 0xff, 0xdd, 0xdd,
+	0xff, 0xff, 0xff, 0xbb, 0xff, 0xff, 0xff, 0xbb,
+	0xbb, 0xff, 0xff, 0xff, 0x77, 0xff, 0xff, 0xff,
+	0x77, 0x77, 0xff, 0x77, 0xbb, 0xdd, 0xee, 0xff,
+	0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0x00,
+	0x00, 0xff, 0xff, 0xcc, 0xcc, 0xcc, 0x33, 0xcc,
+	0xcc, 0xcc, 0x33, 0x33, 0xcc, 0xcc, 0xcc, 0xff,
+	0xff, 0xff, 0xee, 0xff, 0xff, 0xff, 0xee, 0xee,
+	0xff, 0xff, 0xff, 0xdd, 0xff, 0xff, 0xff, 0xdd,
+	0xdd, 0xff, 0xff, 0xff, 0xbb, 0xff, 0xff, 0xff,
+	0xbb, 0xbb, 0xff, 0xff, 0xff, 0x77, 0xff, 0xff,
+	0xff, 0x77, 0x77, 0xff, 0x77, 0xbb, 0xdd, 0xee,
+};
+
+static int sdhci_of_arasan_tuning_soft(struct sdhci_host *host,
+		u32 opcode, bool set)
+{
+	int tuning_loop_counter = MAX_TUNING_LOOP;
+	int ret = 0;
+	const u8 *tuning_blk_pattern = NULL;
+	u8 *tuning_blk = NULL;
+	int blksz = 0;
+
+	sdhci_of_arasan_init_tuning_para(host);
+	host->flags |= SDHCI_EXE_SOFT_TUNING;
+	pr_err("%s: now, start tuning soft...\n", __func__);
+
+	if (opcode == MMC_SEND_TUNING_BLOCK_HS200) {
+		if (host->mmc->ios.bus_width == MMC_BUS_WIDTH_8) {
+			tuning_blk_pattern = tuning_blk_pattern_8bit;
+			blksz = 128;
+		} else if (host->mmc->ios.bus_width == MMC_BUS_WIDTH_4) {
+			tuning_blk_pattern = tuning_blk_pattern_4bit;
+			blksz = 64;
+		}
+	} else {
+		tuning_blk_pattern = tuning_blk_pattern_4bit;
+		blksz = 64;
+	}
+	tuning_blk = kzalloc(blksz, GFP_KERNEL);
+	if (!tuning_blk) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	do {
+		struct mmc_request mrq = { NULL };
+		struct mmc_command cmd = { 0 };
+		struct mmc_data data = { 0 };
+		struct scatterlist sg;
+
+		cmd.opcode = opcode;
+		cmd.arg = 0;
+		cmd.flags = MMC_RSP_R1 | MMC_CMD_ADTC;
+		cmd.error = 0;
+
+		data.blksz = blksz;
+		data.blocks = 1;
+		data.flags = MMC_DATA_READ;
+		data.sg = &sg;
+		data.sg_len = 1;
+		data.error = 0;
+
+		sg_init_one(&sg, tuning_blk, blksz);
+
+		mrq.cmd = &cmd;
+		mrq.data = &data;
+
+		ret = sdhci_of_arasan_tuning_find_condition(host, host->mmc->ios.timing);
+		if (ret == 0) {			/* tuning ok */
+			break;
+		} else if (ret == -1) {	/* tuning fail */
+			pr_err("%s: tuning soft fail\n", __func__);
+			break;
+		}
+		mmc_wait_for_req(host->mmc, &mrq);
+		/* no cmd or data error and tuning data is ok, then set sample flag */
+		if (!cmd.error && !data.error && (memcmp(tuning_blk, tuning_blk_pattern, sizeof(blksz)) == 0)) {/*lint !e668*/
+			sdhci_of_arasan_tuning_set_current_state(host, 1);
+		} else {
+			sdhci_of_arasan_tuning_set_current_state(host, 0);
+			dev_dbg(&host->mmc->class_dev, "Tuning error: cmd.error:%d, data.error:%d\n", cmd.error, data.error);
+		}
+	} while (tuning_loop_counter--);
+	kfree(tuning_blk);
+
+	if (set) {
+		ret = sdhci_of_arasan_tuning_move(host, TUNING_CLK, TUNING_FLAG_NOUSE);
+	}
+
+err:
+	host->flags &= ~SDHCI_EXE_SOFT_TUNING;
+	return ret;
+}
+
+static void sdhci_arasan_hw_reset(struct sdhci_host *host)
+{
+	sdhci_of_arasan_hardware_reset(host, 1);
+	sdhci_of_arasan_hardware_reset(host, 0);
+
+	sdhci_of_arasan_PHY_init(host);
+}
+
+void sdhci_of_arasan_chk_busy_before_send_cmd(struct sdhci_host *host,
+	struct mmc_command* cmd)
+{
+	unsigned long timeout;
+
+	/* We shouldn't wait for busy for stop commands */
+	if ((cmd->opcode != MMC_STOP_TRANSMISSION) && (cmd->opcode != MMC_SEND_STATUS)) {
+		/* Wait busy max 10 s */
+		timeout = 10000;
+		while (!(sdhci_readl(host, SDHCI_PRESENT_STATE) & SDHCI_DATA_0_LVL_MASK)) {
+			if (timeout == 0) {
+				pr_err("%s: wait busy 10s time out.\n", mmc_hostname(host->mmc));
+				sdhci_dumpregs(host);
+				cmd->error = -EIO;
+				tasklet_schedule(&host->finish_tasklet);
+				return;
+			}
+			timeout--;
+			mdelay(1);
+		}
+	}
+	return;
+}
+
+int sdhci_arasan_enable_dma(struct sdhci_host *host)
+{
+	u32 ctrl;
+
+	if (!(host->quirks2 & SDHCI_QUIRK2_BROKEN_64_BIT_DMA)){
+		ctrl = sdhci_readl(host, SDHCI_CORE_CFG1);
+		ctrl |= SDHCI_CORE_CFG1_64BIT_SUPPORT;/*lint !e648*/
+		sdhci_writel(host, ctrl, SDHCI_CORE_CFG1);
+	}
+	return 0;
+}
+
+extern void sdhci_set_transfer_irqs(struct sdhci_host *host);
+
+static void sdhci_of_arasan_restore_transfer_para(struct sdhci_host *host)
 {
 	u8 ctrl;
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
+	u16 mode;
 
-	sdhci_reset(host, mask);
+	sdhci_arasan_enable_dma(host);
 
-	if (sdhci_arasan->quirks & SDHCI_ARASAN_QUIRK_FORCE_CDTEST) {
+	if (host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA))
+		host->flags |= SDHCI_REQ_USE_DMA;
+	/*
+	 * Always adjust the DMA selection as some controllers
+	 * (e.g. JMicron) can't do PIO properly when the selection
+	 * is ADMA.
+	 */
+	if (host->version >= SDHCI_SPEC_200) {
 		ctrl = sdhci_readb(host, SDHCI_HOST_CONTROL);
-		ctrl |= SDHCI_CTRL_CDTEST_INS | SDHCI_CTRL_CDTEST_EN;
+		ctrl &= ~SDHCI_CTRL_DMA_MASK;
+		if ((host->flags & SDHCI_REQ_USE_DMA) &&
+			(host->flags & SDHCI_USE_ADMA)) {
+			if (host->flags & SDHCI_USE_64_BIT_DMA)
+				ctrl |= SDHCI_CTRL_ADMA64;
+			else
+				ctrl |= SDHCI_CTRL_ADMA32;
+		} else {
+			ctrl |= SDHCI_CTRL_SDMA;
+		}
 		sdhci_writeb(host, ctrl, SDHCI_HOST_CONTROL);
 	}
-}
+	sdhci_set_transfer_irqs(host);
 
-static int sdhci_arasan_voltage_switch(struct mmc_host *mmc,
-				       struct mmc_ios *ios)
+	mode = SDHCI_TRNS_BLK_CNT_EN;
+	mode |= SDHCI_TRNS_MULTI;
+	if (host->flags & SDHCI_REQ_USE_DMA)
+		mode |= SDHCI_TRNS_DMA;
+	sdhci_writew(host, mode, SDHCI_TRANSFER_MODE);
+
+}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0))
+static int sdhci_arasan_select_drive_strength(struct sdhci_host *host,
+		struct mmc_card *card, unsigned int max_dtr, int host_drv,
+				       int card_drv, int *drv_type)
 {
-	switch (ios->signal_voltage) {
-	case MMC_SIGNAL_VOLTAGE_180:
-		/*
-		 * Plese don't switch to 1V8 as arasan,5.1 doesn't
-		 * actually refer to this setting to indicate the
-		 * signal voltage and the state machine will be broken
-		 * actually if we force to enable 1V8. That's something
-		 * like broken quirk but we could work around here.
-		 */
-		return 0;
-	case MMC_SIGNAL_VOLTAGE_330:
-	case MMC_SIGNAL_VOLTAGE_120:
-		/* We don't support 3V3 and 1V2 */
-		break;
-	}
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
 
-	return -EINVAL;
+	int drive_strength = sdhci_arasan->dev_drv_strength;
+
+	if ((mmc_driver_type_mask(drive_strength) & card_drv) == 0)
+		drive_strength = EXT_CSD_DRVIER_STRENGTH_50; /* drivers use Default 50-ohm */
+
+	return drive_strength;
+
 }
+#endif
+
 
 static struct sdhci_ops sdhci_arasan_ops = {
-	.set_clock = sdhci_arasan_set_clock,
+	.get_min_clock = sdhci_arasan_get_min_clock,
+	.set_clock = sdhci_set_clock,
+	.enable_dma = sdhci_arasan_enable_dma,
 	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
 	.get_timeout_clock = sdhci_arasan_get_timeout_clock,
 	.set_bus_width = sdhci_set_bus_width,
-	.reset = sdhci_arasan_reset,
+	.reset = sdhci_reset,
 	.set_uhs_signaling = sdhci_set_uhs_signaling,
+	.platform_init = sdhci_of_arasan_platform_init,
+	.update_phy_control = sdhci_of_arasan_update_phy_control,
+	.tuning_soft = sdhci_of_arasan_tuning_soft,
+	.tuning_move = sdhci_of_arasan_tuning_move,
+	.enable_enhanced_strobe = sdhci_of_arasan_enable_enhanced_strobe,
+	.init_tuning_para = sdhci_of_arasan_init_tuning_para,
+	.check_busy_before_send_cmd = sdhci_of_arasan_chk_busy_before_send_cmd,
+	.restore_transfer_para = sdhci_of_arasan_restore_transfer_para,
+	.hw_reset = sdhci_arasan_hw_reset,
+	.dumpregs = sdhci_arasan_dumpregs,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0))
+	.select_drive_strength = sdhci_arasan_select_drive_strength,
+#endif
 };
 
 static struct sdhci_pltfm_data sdhci_arasan_pdata = {
 	.ops = &sdhci_arasan_ops,
-	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
-	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
-			SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN,
 };
 
 #ifdef CONFIG_PM_SLEEP
@@ -309,28 +1013,30 @@ static struct sdhci_pltfm_data sdhci_arasan_pdata = {
  */
 static int sdhci_arasan_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct sdhci_host *host = platform_get_drvdata(pdev);
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	dev_info(dev, "%s: suspend +\n", __func__);
+
+	pm_runtime_get_sync(dev);
 
 	ret = sdhci_suspend_host(host);
 	if (ret)
 		return ret;
 
-	if (!IS_ERR(sdhci_arasan->phy) && sdhci_arasan->is_phy_on) {
-		ret = phy_power_off(sdhci_arasan->phy);
-		if (ret) {
-			dev_err(dev, "Cannot power off phy.\n");
-			sdhci_resume_host(host);
-			return ret;
-		}
-		sdhci_arasan->is_phy_on = false;
-	}
+	clk_disable_unprepare(sdhci_arasan->clk);
 
-	clk_disable(pltfm_host->clk);
-	clk_disable(sdhci_arasan->clk_ahb);
+	/*disable dll then enable dll & wait ready, finally disable dll again. */
+	sdhci_of_arasan_PHY_set_dll(host, 0xff);
+
+	clk_disable_unprepare(sdhci_arasan->clk_ahb);
+
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
+
+	dev_info(dev, "%s: suspend -\n", __func__);
 
 	return 0;
 }
@@ -344,394 +1050,537 @@ static int sdhci_arasan_suspend(struct device *dev)
  */
 static int sdhci_arasan_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct sdhci_host *host = platform_get_drvdata(pdev);
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
 	int ret;
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	u32 dll_freq_data = 0xff;
 
-	ret = clk_enable(sdhci_arasan->clk_ahb);
+	dev_info(dev, "%s: resume +\n", __func__);
+
+	sdhci_of_arasan_hardware_reset(host, 1);
+	sdhci_of_arasan_hardware_reset(host, 0);
+
+	pm_runtime_get_sync(dev);
+
+	ret = clk_set_rate(sdhci_arasan->clk_ahb, ahb_clk);
+	if (ret)
+		dev_err(dev, "Error setting desired ahb_clk=%u, get clk=%lu.\n", ahb_clk, clk_get_rate(sdhci_arasan->clk_ahb));
+	ret = clk_prepare_enable(sdhci_arasan->clk_ahb);
 	if (ret) {
 		dev_err(dev, "Cannot enable AHB clock.\n");
 		return ret;
 	}
 
-	ret = clk_enable(pltfm_host->clk);
+	ret = clk_set_rate(sdhci_arasan->clk, xin_clk);
+	if (ret)
+		dev_err(dev, "Error setting desired xin_clk=%u, get clk=%lu.\n", xin_clk, clk_get_rate(sdhci_arasan->clk));
+	ret = clk_prepare_enable(sdhci_arasan->clk);
 	if (ret) {
 		dev_err(dev, "Cannot enable SD clock.\n");
+		clk_disable_unprepare(sdhci_arasan->clk_ahb);
 		return ret;
 	}
+	pr_debug("%s: sdhci_arasan->clk_ahb=%lu, sdhci_arasan->clk=%lu.\n", __func__, clk_get_rate(sdhci_arasan->clk_ahb), clk_get_rate(sdhci_arasan->clk));
 
-	if (!IS_ERR(sdhci_arasan->phy) && host->mmc->actual_clock) {
-		ret = phy_power_on(sdhci_arasan->phy);
-		if (ret) {
-			dev_err(dev, "Cannot power on phy.\n");
-			return ret;
+	sdhci_of_arasan_PHY_init(host);
+	sdhci_disable_open_drain(host);
+
+	pr_debug("%s: host->mmc->ios.clock=%d, timing=%d.\n", __func__, host->mmc->ios.clock, host->mmc->ios.timing);
+
+	/*use soft tuning sample send wake up cmd then retuning */
+	if (host->mmc->ios.timing >= MMC_TIMING_MMC_HS200) {
+		pr_info("%s: tuning_move_sample=%d, tuning_init_sample=%d, tuning_strobe_move_sample=%d, tuning_strobe_init_sample=%d.\n", __func__, sdhci_arasan->tuning_move_sample, sdhci_arasan->tuning_init_sample, sdhci_arasan->tuning_strobe_move_sample, sdhci_arasan->tuning_strobe_init_sample);
+		if (sdhci_arasan->tuning_move_sample == 0xff) {
+			sdhci_arasan->tuning_move_sample = sdhci_arasan->tuning_init_sample;
 		}
-		sdhci_arasan->is_phy_on = true;
+		sdhci_set_sample(host, host->mmc->ios.timing, sdhci_arasan->tuning_move_sample);
+		if (sdhci_arasan->tuning_strobe_move_sample == 0xff) {
+			sdhci_arasan->tuning_strobe_move_sample = sdhci_arasan->tuning_strobe_init_sample;
+		}
+		sdhci_set_strobe_sample(host, host->mmc->ios.timing, sdhci_arasan->tuning_strobe_move_sample);
+
+		/*START for emmc data crc & end bit error when resume first transfer data. */
+		sdhci_set_clock(host, host->mmc->ios.clock);
+		if ((host->mmc->ios.clock <= 200000000) && (host->mmc->ios.clock >= 190000000)) {
+			if (freq_sel_efuse_enable)
+				dll_freq_data = freq_sel_efuse_value;
+			else
+				dll_freq_data = hs400_dll_freq_data;
+		}
+		else if ((host->mmc->ios.clock < 190000000) && (host->mmc->ios.clock >= 170000000)) {
+			dll_freq_data = 0x0;
+		}
+		else if ((host->mmc->ios.clock < 170000000) && (host->mmc->ios.clock >= 140000000)) {
+			dll_freq_data = 0x1;
+		}
+		else if ((host->mmc->ios.clock < 140000000) && (host->mmc->ios.clock >= 110000000)) {
+			dll_freq_data = 0x2;
+		}
+		else if ((host->mmc->ios.clock < 110000000) && (host->mmc->ios.clock >= 80000000)) {
+			dll_freq_data = 0x3;
+		}
+		else if ((host->mmc->ios.clock < 80000000) && (host->mmc->ios.clock >= 50000000)) {
+			dll_freq_data = 0x4;
+		}
+		else {
+			dll_freq_data = 0xff;
+		}
+		sdhci_of_arasan_PHY_set_dll(host, dll_freq_data);
+		/*END for emmc data crc & end bit error when resume first transfer data.*/
 	}
 
-	return sdhci_resume_host(host);
+	ret = sdhci_resume_host(host);
+	if (ret)
+		return ret;
+
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
+
+	dev_info(dev, "%s: resume -\n", __func__);
+
+	return 0;
 }
 #endif /* ! CONFIG_PM_SLEEP */
 
-static SIMPLE_DEV_PM_OPS(sdhci_arasan_dev_pm_ops, sdhci_arasan_suspend,
-			 sdhci_arasan_resume);
-
-static const struct of_device_id sdhci_arasan_of_match[] = {
-	/* SoC-specific compatible strings w/ soc_ctl_map */
-	{
-		.compatible = "rockchip,rk3399-sdhci-5.1",
-		.data = &rk3399_soc_ctl_map,
-	},
-
-	/* Generic compatible below here */
-	{ .compatible = "arasan,sdhci-8.9a" },
-	{ .compatible = "arasan,sdhci-5.1" },
-	{ .compatible = "arasan,sdhci-4.9a" },
-
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(of, sdhci_arasan_of_match);
-
-/**
- * sdhci_arasan_sdcardclk_recalc_rate - Return the card clock rate
- *
- * Return the current actual rate of the SD card clock.  This can be used
- * to communicate with out PHY.
- *
- * @hw:			Pointer to the hardware clock structure.
- * @parent_rate		The parent rate (should be rate of clk_xin).
- * Returns the card clock rate.
- */
-static unsigned long sdhci_arasan_sdcardclk_recalc_rate(struct clk_hw *hw,
-						      unsigned long parent_rate)
-
+#ifdef CONFIG_PM
+static int sdhci_arasan_runtime_suspend(struct device *dev)
 {
-	struct sdhci_arasan_data *sdhci_arasan =
-		container_of(hw, struct sdhci_arasan_data, sdcardclk_hw);
-	struct sdhci_host *host = sdhci_arasan->host;
-
-	return host->mmc->actual_clock;
-}
-
-static const struct clk_ops arasan_sdcardclk_ops = {
-	.recalc_rate = sdhci_arasan_sdcardclk_recalc_rate,
-};
-
-/**
- * sdhci_arasan_update_clockmultiplier - Set corecfg_clockmultiplier
- *
- * The corecfg_clockmultiplier is supposed to contain clock multiplier
- * value of programmable clock generator.
- *
- * NOTES:
- * - Many existing devices don't seem to do this and work fine.  To keep
- *   compatibility for old hardware where the device tree doesn't provide a
- *   register map, this function is a noop if a soc_ctl_map hasn't been provided
- *   for this platform.
- * - The value of corecfg_clockmultiplier should sync with that of corresponding
- *   value reading from sdhci_capability_register. So this function is called
- *   once at probe time and never called again.
- *
- * @host:		The sdhci_host
- */
-static void sdhci_arasan_update_clockmultiplier(struct sdhci_host *host,
-						u32 value)
-{
+	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	const struct sdhci_arasan_soc_ctl_map *soc_ctl_map =
-		sdhci_arasan->soc_ctl_map;
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	int ret = 0;
 
-	/* Having a map is optional */
-	if (!soc_ctl_map)
-		return;
+	ret = sdhci_runtime_suspend_host(host);
 
-	/* If we have a map, we expect to have a syscon */
-	if (!sdhci_arasan->soc_ctl_base) {
-		pr_warn("%s: Have regmap, but no soc-ctl-syscon\n",
-			mmc_hostname(host->mmc));
-		return;
-	}
+	if (!IS_ERR(sdhci_arasan->clk))
+		clk_disable_unprepare(sdhci_arasan->clk);
 
-	sdhci_arasan_syscon_write(host, &soc_ctl_map->clockmultiplier, value);
-}
+	/*disable dll then enable dll & wait ready, finally disable dll again. */
+	sdhci_of_arasan_PHY_set_dll(host, 0xff);
 
-/**
- * sdhci_arasan_update_baseclkfreq - Set corecfg_baseclkfreq
- *
- * The corecfg_baseclkfreq is supposed to contain the MHz of clk_xin.  This
- * function can be used to make that happen.
- *
- * NOTES:
- * - Many existing devices don't seem to do this and work fine.  To keep
- *   compatibility for old hardware where the device tree doesn't provide a
- *   register map, this function is a noop if a soc_ctl_map hasn't been provided
- *   for this platform.
- * - It's assumed that clk_xin is not dynamic and that we use the SDHCI divider
- *   to achieve lower clock rates.  That means that this function is called once
- *   at probe time and never called again.
- *
- * @host:		The sdhci_host
- */
-static void sdhci_arasan_update_baseclkfreq(struct sdhci_host *host)
-{
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	const struct sdhci_arasan_soc_ctl_map *soc_ctl_map =
-		sdhci_arasan->soc_ctl_map;
-	u32 mhz = DIV_ROUND_CLOSEST(clk_get_rate(pltfm_host->clk), 1000000);
-
-	/* Having a map is optional */
-	if (!soc_ctl_map)
-		return;
-
-	/* If we have a map, we expect to have a syscon */
-	if (!sdhci_arasan->soc_ctl_base) {
-		pr_warn("%s: Have regmap, but no soc-ctl-syscon\n",
-			mmc_hostname(host->mmc));
-		return;
-	}
-
-	sdhci_arasan_syscon_write(host, &soc_ctl_map->baseclkfreq, mhz);
-}
-
-/**
- * sdhci_arasan_register_sdclk - Register the sdclk for a PHY to use
- *
- * Some PHY devices need to know what the actual card clock is.  In order for
- * them to find out, we'll provide a clock through the common clock framework
- * for them to query.
- *
- * Note: without seriously re-architecting SDHCI's clock code and testing on
- * all platforms, there's no way to create a totally beautiful clock here
- * with all clock ops implemented.  Instead, we'll just create a clock that can
- * be queried and set the CLK_GET_RATE_NOCACHE attribute to tell common clock
- * framework that we're doing things behind its back.  This should be sufficient
- * to create nice clean device tree bindings and later (if needed) we can try
- * re-architecting SDHCI if we see some benefit to it.
- *
- * @sdhci_arasan:	Our private data structure.
- * @clk_xin:		Pointer to the functional clock
- * @dev:		Pointer to our struct device.
- * Returns 0 on success and error value on error
- */
-static int sdhci_arasan_register_sdclk(struct sdhci_arasan_data *sdhci_arasan,
-				       struct clk *clk_xin,
-				       struct device *dev)
-{
-	struct device_node *np = dev->of_node;
-	struct clk_init_data sdcardclk_init;
-	const char *parent_clk_name;
-	int ret;
-
-	/* Providing a clock to the PHY is optional; no error if missing */
-	if (!of_find_property(np, "#clock-cells", NULL))
-		return 0;
-
-	ret = of_property_read_string_index(np, "clock-output-names", 0,
-					    &sdcardclk_init.name);
-	if (ret) {
-		dev_err(dev, "DT has #clock-cells but no clock-output-names\n");
-		return ret;
-	}
-
-	parent_clk_name = __clk_get_name(clk_xin);
-	sdcardclk_init.parent_names = &parent_clk_name;
-	sdcardclk_init.num_parents = 1;
-	sdcardclk_init.flags = CLK_GET_RATE_NOCACHE;
-	sdcardclk_init.ops = &arasan_sdcardclk_ops;
-
-	sdhci_arasan->sdcardclk_hw.init = &sdcardclk_init;
-	sdhci_arasan->sdcardclk =
-		devm_clk_register(dev, &sdhci_arasan->sdcardclk_hw);
-	sdhci_arasan->sdcardclk_hw.init = NULL;
-
-	ret = of_clk_add_provider(np, of_clk_src_simple_get,
-				  sdhci_arasan->sdcardclk);
-	if (ret)
-		dev_err(dev, "Failed to add clock provider\n");
+	if (!IS_ERR(sdhci_arasan->clk_ahb))
+		clk_disable_unprepare(sdhci_arasan->clk_ahb);
 
 	return ret;
 }
 
-/**
- * sdhci_arasan_unregister_sdclk - Undoes sdhci_arasan_register_sdclk()
- *
- * Should be called any time we're exiting and sdhci_arasan_register_sdclk()
- * returned success.
- *
- * @dev:		Pointer to our struct device.
- */
-static void sdhci_arasan_unregister_sdclk(struct device *dev)
+static int sdhci_arasan_runtime_resume(struct device *dev)
 {
-	struct device_node *np = dev->of_node;
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
 
-	if (!of_find_property(np, "#clock-cells", NULL))
-		return;
+	if (!IS_ERR(sdhci_arasan->clk_ahb)) {
+		if (clk_prepare_enable(sdhci_arasan->clk_ahb))
+			pr_warn("%s: clk_prepare_enable clk_ahb failed.\n", __func__);
+	}
 
-	of_clk_del_provider(dev->of_node);
+	if (!IS_ERR(sdhci_arasan->clk)) {
+		if (clk_prepare_enable(sdhci_arasan->clk))
+			pr_warn("%s: clk_prepare_enable sdhci_arasan->clk failed.\n", __func__);
+	}
+
+	sdhci_of_arasan_PHY_init(host);
+	sdhci_disable_open_drain(host);
+
+	return sdhci_runtime_resume_host(host);
 }
+#endif
+
+static const struct dev_pm_ops sdhci_arasan_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(sdhci_arasan_suspend, sdhci_arasan_resume)
+	SET_RUNTIME_PM_OPS(sdhci_arasan_runtime_suspend, sdhci_arasan_runtime_resume,
+						   NULL)
+};
+
+static int sdhci_arasan_get_resource(void)
+{
+	struct device_node *np = NULL;
+
+	if (!pericrg_base) {
+		np = of_find_compatible_node(NULL, NULL, "Hisilicon,crgctrl");
+		if (!np) {
+			printk("can't find crgctrl!\n");
+			return -1;
+		}
+		pericrg_base = of_iomap(np, 0);
+		if (!pericrg_base) {
+			printk("crgctrl iomap error!\n");
+			return -1;
+		}
+	}
+	return 0;
+}
+
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+void sdhci_dsm_set_host_status(struct sdhci_host *host, u32 error_bits)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	sdhci_arasan->cmd_data_status |= error_bits;
+}
+
+#ifdef CONFIG_MMC_CQ_HCI
+void sdhci_cmdq_dsm_set_host_status(struct sdhci_host *host, u32 error_bits)
+{
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	if (error_bits != -1U)/*lint !e501*/
+		sdhci_arasan->para = ((error_bits << 16) | 0x8000000000000000ULL);/*lint !e647*/
+	else
+		sdhci_arasan->para = 0;	// timeout
+}
+
+void sdhci_cmdq_dsm_work(struct cmdq_host *cq_host, bool dsm)
+{
+	struct mmc_card *card;
+	struct sdhci_host *host = mmc_priv(cq_host->mmc);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+
+	u32 error_bits, opcode;
+	u64 para;
+	unsigned long flags;
+	spin_lock_irqsave(&cq_host->cmdq_lock, flags);
+	para = sdhci_arasan->para;
+	sdhci_arasan->para = 0;
+	spin_unlock_irqrestore(&cq_host->cmdq_lock, flags);
+	if (!dsm)
+		return;
+	card = host->mmc->card;
+	opcode = para & 0x3f;
+	error_bits = ((para >> 16) & 0xffffffff);
+	if (para & 0x8000000000000000ULL) {
+		DSM_EMMC_LOG(card, DSM_EMMC_HOST_ERR, "opcode:%d failed, status:%x\n", opcode, error_bits);
+	} else {
+		DSM_EMMC_LOG(card, DSM_EMMC_RW_TIMEOUT_ERR, "opcode:%d failed, status:%x\n", opcode, error_bits);
+	}
+}
+#endif
+
+static void sdhci_dsm_work(struct work_struct *work)
+{
+	struct mmc_card *card;
+	struct sdhci_arasan_data *sdhci_arasan = container_of(work, struct sdhci_arasan_data, dsm_work);
+	struct sdhci_host *host = (struct sdhci_host *)sdhci_arasan->data;
+	u32 error_bits, opcode;
+	u64 para;
+	unsigned long flags;
+	spin_lock_irqsave(&host->lock, flags);
+	para = sdhci_arasan->para;
+	sdhci_arasan->para = 0;
+	spin_unlock_irqrestore(&host->lock, flags);
+	card = host->mmc->card;
+	opcode = para & 0x3f;
+	error_bits = ((para >> 16) & 0xffffffff);
+	if (para & 0x8000000000000000ULL) {
+		DSM_EMMC_LOG(card, DSM_EMMC_HOST_ERR, "opcode:%d failed, status:%x\n", opcode, error_bits);
+	} else {
+		DSM_EMMC_LOG(card, DSM_EMMC_RW_TIMEOUT_ERR, "opcode:%d failed, status:%x\n", opcode, error_bits);
+	}
+}
+
+static inline void sdhci_dsm_host_error_filter(struct sdhci_host *host, struct mmc_request *mrq, u32 * error_bits)
+{
+	if (mrq->cmd) {
+		if (mrq->cmd->opcode == MMC_SEND_TUNING_BLOCK_HS200)
+			*error_bits = 0;
+		else if (host->mmc->ios.clock <= 400000UL) {
+			if (((mrq->cmd->opcode == SD_IO_RW_DIRECT) || (mrq->cmd->opcode == SD_SEND_IF_COND) || (mrq->cmd->opcode == SD_IO_SEND_OP_COND) || (mrq->cmd->opcode == MMC_APP_CMD)))
+				*error_bits = 0;
+			else if (mrq->cmd->opcode == MMC_SEND_STATUS)
+				*error_bits &= ~SDHCI_INT_CRC;
+		}
+	}
+}
+
+void sdhci_dsm_handle(struct sdhci_host *host, struct mmc_request *mrq)
+{
+	u32 error_bits;
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
+	error_bits = sdhci_arasan->cmd_data_status;
+	if (error_bits) {
+		sdhci_arasan->cmd_data_status = 0;
+		sdhci_dsm_host_error_filter(host, mrq, &error_bits);
+		if (error_bits) {
+			sdhci_arasan->para = ((error_bits << 16) | ((mrq->cmd ? mrq->cmd->opcode : 0) & 0x3f) | 0x8000000000000000ULL);/*lint !e647*/
+			queue_work(system_freezable_wq, &sdhci_arasan->dsm_work);
+		}
+	}
+}
+#endif
+
+#ifdef CONFIG_HISI_MMC
+void sdhci_hisi_dump_clk_reg(void)
+{
+	/*print pmctrl_ppll3ctr register value*/
+	if (iosoc_acpu_pmc_base_addr) {
+		pr_err("%s: pmctrl_ppll3ctrl0: 0x%x | pmctrl_ppll3ctrl1:0x%x.\n",
+			__func__,
+			readl(SOC_PMCTRL_PPLL3CTRL0_ADDR(iosoc_acpu_pmc_base_addr)),
+			readl(SOC_PMCTRL_PPLL3CTRL1_ADDR(iosoc_acpu_pmc_base_addr)));
+	} else {
+		pr_err("%s: sdhci_get_pmctrl_resocure fail.\n",__func__);
+	}
+}
+
+#endif
 
 static int sdhci_arasan_probe(struct platform_device *pdev)
 {
+/*lint -save -e593*/
 	int ret;
-	const struct of_device_id *match;
-	struct device_node *node;
-	struct clk *clk_xin;
-	struct sdhci_host *host;
+	struct sdhci_host *host = NULL;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_arasan_data *sdhci_arasan;
 	struct device_node *np = pdev->dev.of_node;
+	static const char *const hi_mci0 = "hi_mci.0";
+	u32 emmc0_rst_bit = 0;
+	u32 config_phy[2] = {0};
+	u32 config_drv_strength[2] = {0};
+#ifdef CONFIG_MMC_CQ_HCI
+	bool cmdq_fix_qbr = false;
+#endif
+	pr_debug("%s: start!\n", __func__);
+	if (get_bootdevice_type() != BOOT_DEVICE_EMMC) {
+		pr_err("not boot from emmc\n");
+		return -ENODEV;
+	}
+	ret = sdhci_get_pmctrl_resocure();
+	if (ret < 0)
+		pr_err("%s :sdhci_get_pmctrl_resocure fail\n", __func__);
+	ret = sdhci_arasan_get_resource();
+	if (ret)
+		return ret;
 
-	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata,
-				sizeof(*sdhci_arasan));
-	if (IS_ERR(host))
-		return PTR_ERR(host);
+	sdhci_arasan = devm_kzalloc(&pdev->dev, sizeof(*sdhci_arasan), GFP_KERNEL);
+	if (!sdhci_arasan)
+		return -ENOMEM;
 
-	pltfm_host = sdhci_priv(host);
-	sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	sdhci_arasan->host = host;
+	if (of_device_is_available(np)) {
+		if (of_property_read_u32(np, "clk-ahb", &ahb_clk))
+			dev_err(&pdev->dev, "clk-ahb cannot get from dts, use the default value!\n");
 
-	match = of_match_node(sdhci_arasan_of_match, pdev->dev.of_node);
-	sdhci_arasan->soc_ctl_map = match->data;
+		if (of_property_read_u32(np, "clk-xin", &xin_clk))
+			dev_err(&pdev->dev, "clk-xin  cannot get from dts, use the default value!\n");
+#ifdef CONFIG_MMC_CQ_HCI
+		if (of_find_property(np, "fix-qbr", NULL))
+			cmdq_fix_qbr = true;
+#endif
 
-	node = of_parse_phandle(pdev->dev.of_node, "arasan,soc-ctl-syscon", 0);
-	if (node) {
-		sdhci_arasan->soc_ctl_base = syscon_node_to_regmap(node);
-		of_node_put(node);
-
-		if (IS_ERR(sdhci_arasan->soc_ctl_base)) {
-			ret = PTR_ERR(sdhci_arasan->soc_ctl_base);
-			if (ret != -EPROBE_DEFER)
-				dev_err(&pdev->dev, "Can't get syscon: %d\n",
-					ret);
-			goto err_pltfm_free;
+		if (!of_property_read_u32_array(np, "phy-config", config_phy, 2)) {
+			hs400_dll_freq_data = config_phy[0];
+			hs400_tx_phase = config_phy[1];
+		} else {
+			dev_err(&pdev->dev, "phy-config cannot get from dts, use the default value!\n");
 		}
+
+		if (!of_property_read_u32(np, "peri-crg-rst-emmc0-bit", &emmc0_rst_bit))
+			emmc0_rst = 1 << emmc0_rst_bit;
+		else
+			dev_err(&pdev->dev, "emmc0_rst_bit cannot get from dts, use the default value!\n");
+
+		if (!of_property_read_u32_array(np, "drv-strength", config_drv_strength, 2)) {
+			if (config_drv_strength[0] > 0x4 || config_drv_strength[1] > 0x4) {
+				dev_err(&pdev->dev, "drv_strength value error, use the default value!\n");
+				sdhci_arasan->host_drv_strength = HOST_DRV_STRENGTH_40;/*use default 40ohm*/
+				sdhci_arasan->dev_drv_strength = EXT_CSD_DRVIER_STRENGTH_40;/*use default 40ohm*/
+			} else {
+				sdhci_arasan->host_drv_strength = config_drv_strength[0];/*mask 0-4bit*/
+				sdhci_arasan->dev_drv_strength = config_drv_strength[1];/*mask 0-4bit*/
+			}
+		} else {
+			dev_err(&pdev->dev, "drv_strength-config cannot get from dts, use the default value!\n");
+			sdhci_arasan->host_drv_strength = HOST_DRV_STRENGTH_40;/*use default 40ohm*/
+			sdhci_arasan->dev_drv_strength = EXT_CSD_DRVIER_STRENGTH_40;/*use default 40ohm*/
+		}
+
 	}
 
 	sdhci_arasan->clk_ahb = devm_clk_get(&pdev->dev, "clk_ahb");
 	if (IS_ERR(sdhci_arasan->clk_ahb)) {
 		dev_err(&pdev->dev, "clk_ahb clock not found.\n");
-		ret = PTR_ERR(sdhci_arasan->clk_ahb);
-		goto err_pltfm_free;
+		return PTR_ERR(sdhci_arasan->clk_ahb);/*lint !e429*/
 	}
-
-	clk_xin = devm_clk_get(&pdev->dev, "clk_xin");
-	if (IS_ERR(clk_xin)) {
-		dev_err(&pdev->dev, "clk_xin clock not found.\n");
-		ret = PTR_ERR(clk_xin);
-		goto err_pltfm_free;
-	}
-
+	ret = clk_set_rate(sdhci_arasan->clk_ahb, ahb_clk);
+	if (ret)
+		dev_err(&pdev->dev, "Error setting desired ahb_clk=%u, get clk=%lu.\n", ahb_clk, clk_get_rate(sdhci_arasan->clk_ahb));
 	ret = clk_prepare_enable(sdhci_arasan->clk_ahb);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to enable AHB clock.\n");
-		goto err_pltfm_free;
+		return ret;/*lint !e429*/
 	}
 
-	ret = clk_prepare_enable(clk_xin);
+	sdhci_arasan->clk = devm_clk_get(&pdev->dev, "clk_xin");
+	if (IS_ERR(sdhci_arasan->clk)) {
+		dev_err(&pdev->dev, "clk_xin clock not found.\n");
+		return PTR_ERR(sdhci_arasan->clk);/*lint !e429*/
+	}
+	ret = clk_set_rate(sdhci_arasan->clk, xin_clk);
+	if (ret)
+		dev_err(&pdev->dev, "Error setting desired xin_clk=%u, get clk=%lu.\n", xin_clk, clk_get_rate(sdhci_arasan->clk));
+	ret = clk_prepare_enable(sdhci_arasan->clk);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to enable SD clock.\n");
 		goto clk_dis_ahb;
 	}
 
-	sdhci_get_of_property(pdev);
+	pr_info("%s: clk_ahb=%lu, clk_xin=%lu\n", __func__, clk_get_rate(sdhci_arasan->clk_ahb), clk_get_rate(sdhci_arasan->clk));
 
-	if (of_property_read_bool(np, "xlnx,fails-without-test-cd"))
-		sdhci_arasan->quirks |= SDHCI_ARASAN_QUIRK_FORCE_CDTEST;
+	sdhci_of_arasan_hardware_reset(host, 1);
+	sdhci_of_arasan_hardware_reset(host, 0);
+	sdhci_arasan->enhanced_strobe_enabled = 0;
+	sdhci_arasan->tuning_current_sample = -1;
+	sdhci_arasan->tuning_init_sample = 0xff;
+	sdhci_arasan->tuning_sample_count = 0;
+	sdhci_arasan->tuning_move_sample = 0xff;
+	sdhci_arasan->tuning_move_count = 0;
+	sdhci_arasan->tuning_strobe_init_sample = 0;	/* 0x0, 0x1, 0x2, 0x3 */
+	sdhci_arasan->tuning_strobe_move_sample = 0xff;
+	sdhci_arasan->tuning_strobe_move_count = 0;
+	sdhci_arasan->tuning_sample_flag = 0;
 
-	pltfm_host->clk = clk_xin;
-
-	if (of_device_is_compatible(pdev->dev.of_node,
-				    "rockchip,rk3399-sdhci-5.1"))
-		sdhci_arasan_update_clockmultiplier(host, 0x0);
-
-	sdhci_arasan_update_baseclkfreq(host);
-
-	ret = sdhci_arasan_register_sdclk(sdhci_arasan, clk_xin, &pdev->dev);
-	if (ret)
+	host = sdhci_pltfm_init(pdev, &sdhci_arasan_pdata, 0);
+	if (IS_ERR(host)) {
+		ret = PTR_ERR(host);
 		goto clk_disable_all;
-
-	ret = mmc_of_parse(host->mmc);
-	if (ret) {
-		dev_err(&pdev->dev, "parsing dt failed (%u)\n", ret);
-		goto unreg_clk;
 	}
 
-	sdhci_arasan->phy = ERR_PTR(-ENODEV);
-	if (of_device_is_compatible(pdev->dev.of_node,
-				    "arasan,sdhci-5.1")) {
-		sdhci_arasan->phy = devm_phy_get(&pdev->dev,
-						 "phy_arasan");
-		if (IS_ERR(sdhci_arasan->phy)) {
-			ret = PTR_ERR(sdhci_arasan->phy);
-			dev_err(&pdev->dev, "No phy for arasan,sdhci-5.1.\n");
-			goto unreg_clk;
+	g_sdhci_for_mmctrace = host;
+
+	sdhci_get_of_property(pdev);
+	pltfm_host = sdhci_priv(host);
+	pltfm_host->priv = sdhci_arasan;
+	pltfm_host->clk = sdhci_arasan->clk;
+
+#ifdef CONFIG_MMC_CQ_HCI
+#define HW_CMDQ_REG_OFF                0x200
+	if (host->mmc->caps2 & MMC_CAP2_CMD_QUEUE) {
+		host->cq_host = cmdq_pltfm_init(pdev, host->ioaddr + HW_CMDQ_REG_OFF);
+		if (IS_ERR(host->cq_host)) {
+			ret = PTR_ERR(host->cq_host);
+			dev_err(&pdev->dev, "cmd queue platform init failed (%u)\n", ret);
+			host->mmc->caps2 &= ~MMC_CAP2_CMD_QUEUE;
+		} else {
+			host->cq_host->fix_qbr = cmdq_fix_qbr;
 		}
 
-		ret = phy_init(sdhci_arasan->phy);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "phy_init err.\n");
-			goto unreg_clk;
+		if (!(host->quirks2 & SDHCI_QUIRK2_BROKEN_64_BIT_DMA)) {
+			host->cq_host->quirks |= CMDQ_QUIRK_SHORT_TXFR_DESC_SZ;
+			host->cq_host->caps |= CMDQ_TASK_DESC_SZ_128;
+			pr_err("cmdq using ADMA-64bit\n");
 		}
-
-		host->mmc_host_ops.hs400_enhanced_strobe =
-					sdhci_arasan_hs400_enhanced_strobe;
-		host->mmc_host_ops.start_signal_voltage_switch =
-					sdhci_arasan_voltage_switch;
 	}
+#endif
+
+	host->quirks |= SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN;
+	host->quirks2 |= SDHCI_QUIRK2_PRESET_VALUE_BROKEN;
+	host->quirks2 |= SDHCI_QUIRK2_USE_1_8_V_VMMC;
+
+	if (host->mmc->pm_caps & MMC_PM_KEEP_POWER) {
+		host->mmc->pm_flags |= MMC_PM_KEEP_POWER;
+		host->quirks2 |= SDHCI_QUIRK2_HOST_OFF_CARD_ON;
+	}
+
+	/* import, ADMA support 64 or 32 bit address, here we use 32 bit. SDMA only support 32 bit mask. */
+	if (!(host->quirks2 & SDHCI_QUIRK2_BROKEN_64_BIT_DMA)) {
+		host->dma_mask = DMA_BIT_MASK(64);/*lint !e598 !e648*/
+	} else {
+		host->dma_mask = DMA_BIT_MASK(32);
+	}
+	mmc_dev(host->mmc)->dma_mask = &host->dma_mask;
+
+	/**
+	 * BUG: device rename krees old name, which would be realloced for other
+	 * device, pdev->name points to freed space, driver match may cause a panic
+	 * for wrong device
+	 */
+	pdev->name = hi_mci0;
+	ret = device_rename(&pdev->dev, hi_mci0);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "dev set name hi_mci.0 fail \n");
+		/* if failed, keep pdev->name same to dev.kobj.name */
+		pdev->name = pdev->dev.kobj.name;
+		goto err_pltfm_free;
+	}
+	/* keep pdev->name pointing to dev.kobj.name */
+	pdev->name = pdev->dev.kobj.name;
+	host->hw_name = dev_name(&pdev->dev);
+
+#ifdef CONFIG_HISI_BOOTDEVICE
+	if (get_bootdevice_type() == BOOT_DEVICE_EMMC)
+		set_bootdevice_name(&pdev->dev);
+#endif
+
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+	sdhci_arasan->data = (void *)host;
+	INIT_WORK(&sdhci_arasan->dsm_work, sdhci_dsm_work);
+#endif
 
 	ret = sdhci_add_host(host);
 	if (ret)
-		goto err_add_host;
+		goto err_pltfm_free;
+
+	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
+	pm_runtime_set_autosuspend_delay(&pdev->dev, 50);
+	pm_runtime_use_autosuspend(&pdev->dev);
+	pm_suspend_ignore_children(&pdev->dev, 1);
+
+	pr_info("%s: done!\n", __func__);
 
 	return 0;
 
-err_add_host:
-	if (!IS_ERR(sdhci_arasan->phy))
-		phy_exit(sdhci_arasan->phy);
-unreg_clk:
-	sdhci_arasan_unregister_sdclk(&pdev->dev);
-clk_disable_all:
-	clk_disable_unprepare(clk_xin);
-clk_dis_ahb:
-	clk_disable_unprepare(sdhci_arasan->clk_ahb);
 err_pltfm_free:
 	sdhci_pltfm_free(pdev);
+
+clk_disable_all:
+	clk_disable_unprepare(sdhci_arasan->clk);
+clk_dis_ahb:
+	clk_disable_unprepare(sdhci_arasan->clk_ahb);
+
+	pr_err("%s: error = %d!\n", __func__, ret);
+
 	return ret;
+	/*lint -restore*/
 }
 
 static int sdhci_arasan_remove(struct platform_device *pdev)
 {
-	int ret;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
-	struct clk *clk_ahb = sdhci_arasan->clk_ahb;
+	struct sdhci_arasan_data *sdhci_arasan = pltfm_host->priv;
 
-	if (!IS_ERR(sdhci_arasan->phy)) {
-		if (sdhci_arasan->is_phy_on)
-			phy_power_off(sdhci_arasan->phy);
-		phy_exit(sdhci_arasan->phy);
-	}
+	pr_debug("%s:\n", __func__);
 
-	sdhci_arasan_unregister_sdclk(&pdev->dev);
+	pm_runtime_get_sync(&pdev->dev);
+	sdhci_remove_host(host, 1);
+	pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 
-	ret = sdhci_pltfm_unregister(pdev);
+	clk_disable_unprepare(sdhci_arasan->clk);
+	clk_disable_unprepare(sdhci_arasan->clk_ahb);
 
-	clk_disable_unprepare(clk_ahb);
+	sdhci_pltfm_free(pdev);
 
-	return ret;
+	return 0;
 }
+
+static const struct of_device_id sdhci_arasan_of_match[] = {
+	{.compatible = "arasan,sdhci"},
+	{}
+};
+
+MODULE_DEVICE_TABLE(of, sdhci_arasan_of_match);
 
 static struct platform_driver sdhci_arasan_driver = {
 	.driver = {
-		.name = "sdhci-arasan",
-		.of_match_table = sdhci_arasan_of_match,
-		.pm = &sdhci_arasan_dev_pm_ops,
-	},
+			   .name = "sdhci-arasan",
+			   .of_match_table = sdhci_arasan_of_match,
+			   .pm = &sdhci_arasan_dev_pm_ops,
+			   },
 	.probe = sdhci_arasan_probe,
 	.remove = sdhci_arasan_remove,
 };

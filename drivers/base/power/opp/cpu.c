@@ -79,6 +79,9 @@ int dev_pm_opp_init_cpufreq_table(struct device *dev,
 		}
 		freq_table[i].driver_data = i;
 		freq_table[i].frequency = rate / 1000;
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+		freq_table[i].electric_current = opp->u_amp;
+#endif
 
 		/* Is Boost/turbo opp ? */
 		if (dev_pm_opp_is_turbo(opp))
@@ -87,6 +90,9 @@ int dev_pm_opp_init_cpufreq_table(struct device *dev,
 
 	freq_table[i].driver_data = i;
 	freq_table[i].frequency = CPUFREQ_TABLE_END;
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	freq_table[i].electric_current = CPUFREQ_TABLE_END;
+#endif
 
 	*table = &freq_table[0];
 

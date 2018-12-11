@@ -10,6 +10,7 @@
 #include <linux/flex_proportions.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+#include <linux/kref.h>
 
 struct page;
 struct device;
@@ -92,6 +93,8 @@ struct bdi_writeback {
 
 	struct percpu_counter stat[NR_WB_STAT_ITEMS];
 
+	atomic_t dirty_sleeping;    /* waiting on dirty limit exceeded */
+
 	struct bdi_writeback_congested *congested;
 
 	unsigned long bw_time_stamp;	/* last time write bw is updated */
@@ -142,6 +145,7 @@ struct backing_dev_info {
 
 	char *name;
 
+	struct kref refcnt;	/* Reference counter for the structure */
 	unsigned int min_ratio;
 	unsigned int max_ratio, max_prop_frac;
 
@@ -176,6 +180,8 @@ struct backing_dev_info {
 enum {
 	BLK_RW_ASYNC	= 0,
 	BLK_RW_SYNC	= 1,
+	BLK_RW_BG	= 2,
+	BLK_RW_FG	= 3,
 };
 
 void clear_wb_congested(struct bdi_writeback_congested *congested, int sync);

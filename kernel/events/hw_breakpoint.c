@@ -566,6 +566,11 @@ static int hw_breakpoint_add(struct perf_event *bp, int flags)
 	if (!(flags & PERF_EF_START))
 		bp->hw.state = PERF_HES_STOPPED;
 
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+	if (bp->attr.bp_addr_mask && !arch_has_hw_breakpoint_addr_mask())
+		return -EOPNOTSUPP;
+#endif
+
 	if (is_sampling_event(bp)) {
 		bp->hw.last_period = bp->hw.sample_period;
 		perf_swevent_set_period(bp);

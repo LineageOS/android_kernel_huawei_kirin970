@@ -48,6 +48,12 @@ static void clk_gate_endisable(struct clk_hw *hw, int enable)
 
 	set ^= enable;
 
+#ifdef CONFIG_HISI_CLK
+	#define CLK_GATE_ALWAYS_ON_MASK   0x4
+	if ((!set) && (gate->flags & CLK_GATE_ALWAYS_ON_MASK))
+		return;
+#endif
+
 	if (gate->lock)
 		spin_lock_irqsave(gate->lock, flags);
 	else
@@ -83,7 +89,9 @@ static int clk_gate_enable(struct clk_hw *hw)
 
 static void clk_gate_disable(struct clk_hw *hw)
 {
+#ifndef CONFIG_HISI_CLK_ALWAYS_ON
 	clk_gate_endisable(hw, 0);
+#endif
 }
 
 static int clk_gate_is_enabled(struct clk_hw *hw)
@@ -101,11 +109,26 @@ static int clk_gate_is_enabled(struct clk_hw *hw)
 
 	return reg ? 1 : 0;
 }
+#ifdef CONFIG_HISI_CLK_DEBUG
+static int hi3xxx_dumpgt(struct clk_hw *hw, char* buf)
+{
+	u32 reg;
+	struct clk_gate *gate = to_clk_gate(hw);
 
+	if (gate->reg && buf) {
+		reg = clk_readl(gate->reg);
+		snprintf(buf, DUMP_CLKBUFF_MAX_SIZE, "[%s] : regAddress = 0x%pK, regval = 0x%x\n", __clk_get_name(hw->clk), gate->reg, reg);
+	}
+	return 0;
+}
+#endif
 const struct clk_ops clk_gate_ops = {
 	.enable = clk_gate_enable,
 	.disable = clk_gate_disable,
 	.is_enabled = clk_gate_is_enabled,
+#ifdef CONFIG_HISI_CLK_DEBUG
+	.dump_reg = hi3xxx_dumpgt,
+#endif
 };
 EXPORT_SYMBOL_GPL(clk_gate_ops);
 
@@ -145,7 +168,7 @@ struct clk_hw *clk_hw_register_gate(struct device *dev, const char *name,
 	init.name = name;
 	init.ops = &clk_gate_ops;
 	init.flags = flags | CLK_IS_BASIC;
-	init.parent_names = (parent_name ? &parent_name: NULL);
+	init.parent_names = (parent_name ? &parent_name : NULL);
 	init.num_parents = (parent_name ? 1 : 0);
 
 	/* struct clk_gate assignments */
@@ -162,7 +185,7 @@ struct clk_hw *clk_hw_register_gate(struct device *dev, const char *name,
 		hw = ERR_PTR(ret);
 	}
 
-	return hw;
+	return hw;/*lint !e593 */
 }
 EXPORT_SYMBOL_GPL(clk_hw_register_gate);
 

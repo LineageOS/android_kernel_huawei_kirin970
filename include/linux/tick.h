@@ -50,6 +50,15 @@ extern void hotplug_cpu__broadcast_tick_pull(int dead_cpu);
 static inline void hotplug_cpu__broadcast_tick_pull(int dead_cpu) { }
 #endif
 
+
+#ifdef CONFIG_CPU_IDLE_GOV_MENU
+extern void menu_hrtimer_cancel(void);
+#else
+static inline void menu_hrtimer_cancel(void) {}
+#endif
+
+
+
 enum tick_broadcast_mode {
 	TICK_BROADCAST_OFF,
 	TICK_BROADCAST_ON,
@@ -239,7 +248,19 @@ extern void __tick_nohz_task_switch(void);
 #else
 static inline int housekeeping_any_cpu(void)
 {
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	cpumask_t available;
+	int cpu;
+
+	cpumask_andnot(&available, cpu_online_mask, cpu_isolated_mask);
+	cpu = cpumask_any(&available);
+	if (cpu >= nr_cpu_ids)
+		cpu = smp_processor_id();
+
+	return cpu;
+#else
 	return smp_processor_id();
+#endif
 }
 static inline bool tick_nohz_full_enabled(void) { return false; }
 static inline bool tick_nohz_full_cpu(int cpu) { return false; }
@@ -277,7 +298,11 @@ static inline bool is_housekeeping_cpu(int cpu)
 	if (tick_nohz_full_enabled())
 		return cpumask_test_cpu(cpu, housekeeping_mask);
 #endif
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	return !cpu_isolated(cpu);
+#else
 	return true;
+#endif
 }
 
 static inline void housekeeping_affine(struct task_struct *t)

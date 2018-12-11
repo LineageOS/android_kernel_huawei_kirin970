@@ -2224,6 +2224,11 @@ static void xhci_add_in_port(struct xhci_hcd *xhci, unsigned int num_ports,
 		}
 	}
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if (xhci->quirks & XHCI_DISABLE_LPM)
+		xhci->sw_lpm_support = 0;
+#endif
+
 	port_offset--;
 	for (i = port_offset; i < (port_offset + port_count); i++) {
 		/* Duplicate entry.  Ignore the port if the revisions differ. */

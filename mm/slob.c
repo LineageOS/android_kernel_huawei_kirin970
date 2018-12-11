@@ -67,6 +67,7 @@
 #include <linux/rcupdate.h>
 #include <linux/list.h>
 #include <linux/kmemleak.h>
+#include <linux/hisi/page_tracker.h>
 
 #include <trace/events/kmem.h>
 
@@ -200,6 +201,8 @@ static void *slob_new_pages(gfp_t gfp, int order, int node)
 
 	if (!page)
 		return NULL;
+
+	page_tracker_set_type(page, TRACK_SLAB, order);
 
 	return page_address(page);
 }

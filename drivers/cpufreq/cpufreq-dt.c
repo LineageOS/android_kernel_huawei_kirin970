@@ -24,14 +24,25 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/thermal.h>
+#include <linux/hisi/hisi_cpufreq_dt.h>
 
 #include "cpufreq-dt.h"
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+#include <linux/hisi/hisi_hw_vote.h>
+#endif
+
+#ifdef CONFIG_HISI_DRG
+#include <linux/hisi/hisi_drg.h>
+#endif
 
 struct private_data {
 	struct opp_table *opp_table;
 	struct device *cpu_dev;
 	struct thermal_cooling_device *cdev;
 	const char *reg_name;
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+	struct hvdev *cpu_hvdev;
+#endif
 };
 
 static struct freq_attr *cpufreq_dt_attr[] = {
@@ -40,12 +51,22 @@ static struct freq_attr *cpufreq_dt_attr[] = {
 	NULL,
 };
 
+#ifdef CONFIG_HISI_L2_DYNAMIC_RETENTION
+extern void l2_dynamic_retention_ctrl(struct cpufreq_policy *policy, unsigned int freq);
+#endif
 static int set_target(struct cpufreq_policy *policy, unsigned int index)
 {
 	struct private_data *priv = policy->driver_data;
 
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+#ifdef CONFIG_HISI_L2_DYNAMIC_RETENTION
+	l2_dynamic_retention_ctrl(policy, policy->freq_table[index].frequency);
+#endif
+	return hisi_cpufreq_set(priv->cpu_hvdev, policy->freq_table[index].frequency);
+#else
 	return dev_pm_opp_set_rate(priv->cpu_dev,
 				   policy->freq_table[index].frequency * 1000);
+#endif
 }
 
 /*
@@ -197,6 +218,13 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 		}
 	}
 
+#ifdef CONFIG_HISI_CPUFREQ_DT
+	ret = hisi_cpufreq_set_supported_hw(policy);
+	if (ret)
+		dev_err(cpu_dev, "%s: failed to set supported hw: %d\n",
+			__func__, ret);
+#endif
+
 	/*
 	 * Initialize OPP tables for all policy->cpus. They will be shared by
 	 * all CPUs which have marked their CPUs shared with OPP bindings.
@@ -248,6 +276,9 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 		goto out_free_priv;
 	}
 
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+	priv->cpu_hvdev = hisi_cpufreq_hv_init(cpu_dev);
+#endif
 	priv->cpu_dev = cpu_dev;
 	policy->driver_data = priv;
 	policy->clk = cpu_clk;
@@ -257,6 +288,9 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 	if (suspend_opp)
 		policy->suspend_freq = dev_pm_opp_get_freq(suspend_opp) / 1000;
 	rcu_read_unlock();
+#ifdef CONFIG_HISI_CPUFREQ_DT
+	hisi_cpufreq_get_suspend_freq(policy);
+#endif
 
 	ret = cpufreq_table_validate_and_show(policy, freq_table);
 	if (ret) {
@@ -280,12 +314,9 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 
 	policy->cpuinfo.transition_latency = transition_latency;
 
-        /*
-         * Android: set default parameters for parity between schedutil and
-         * schedfreq
-         */
-	policy->up_transition_delay_us = transition_latency / NSEC_PER_USEC;
-	policy->down_transition_delay_us = 50000; /* 50ms */
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+	hisi_cpufreq_policy_cur_init(priv->cpu_hvdev, policy);
+#endif
 
 	return 0;
 
@@ -307,13 +338,26 @@ static int cpufreq_exit(struct cpufreq_policy *policy)
 {
 	struct private_data *priv = policy->driver_data;
 
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+	hisi_cpufreq_hv_exit(priv->cpu_hvdev, policy->cpu);
+	priv->cpu_hvdev = NULL;
+#endif
 	cpufreq_cooling_unregister(priv->cdev);
+#ifdef CONFIG_HISI_DRG
+	drg_cpufreq_unregister(policy);
+#endif
 	dev_pm_opp_free_cpufreq_table(priv->cpu_dev, &policy->freq_table);
 	dev_pm_opp_of_cpumask_remove_table(policy->related_cpus);
+#ifdef CONFIG_HISI_CPUFREQ_DT
+	hisi_cpufreq_put_supported_hw(policy);
+#endif
 	if (priv->reg_name)
 		dev_pm_opp_put_regulator(priv->opp_table);
 
 	clk_put(policy->clk);
+#ifdef CONFIG_HISI_CPUFREQ
+	policy->clk = ERR_PTR(-EINVAL);
+#endif
 	kfree(priv);
 
 	return 0;
@@ -326,6 +370,10 @@ static void cpufreq_ready(struct cpufreq_policy *policy)
 
 	if (WARN_ON(!np))
 		return;
+
+#ifdef CONFIG_HISI_DRG
+	drg_cpufreq_register(policy);
+#endif
 
 	/*
 	 * For now, just loading the cooling device;
@@ -352,10 +400,18 @@ static void cpufreq_ready(struct cpufreq_policy *policy)
 }
 
 static struct cpufreq_driver dt_cpufreq_driver = {
+#ifdef CONFIG_HISI_CPUFREQ_DT
+	.flags = CPUFREQ_STICKY | CPUFREQ_NEED_INITIAL_FREQ_CHECK | CPUFREQ_HAVE_GOVERNOR_PER_POLICY,
+#else
 	.flags = CPUFREQ_STICKY | CPUFREQ_NEED_INITIAL_FREQ_CHECK,
+#endif
 	.verify = cpufreq_generic_frequency_table_verify,
 	.target_index = set_target,
+#ifdef CONFIG_HISI_HW_VOTE_CPU_FREQ
+	.get = hisi_cpufreq_get,
+#else
 	.get = cpufreq_generic_get,
+#endif
 	.init = cpufreq_init,
 	.exit = cpufreq_exit,
 	.ready = cpufreq_ready,

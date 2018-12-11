@@ -268,6 +268,7 @@ static struct amba_device *of_amba_device_create(struct device_node *node,
 		goto err_free;
 	}
 
+	ret = of_property_read_u32(dev->dev.of_node, "secure-mode", (u32 *)&dev->secure_mode);
 	ret = amba_device_add(dev, &iomem_resource);
 	if (ret) {
 		pr_err("amba_device_add() failed (%d) for %s\n",

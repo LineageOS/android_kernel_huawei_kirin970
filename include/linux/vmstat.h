@@ -347,6 +347,12 @@ static inline void __mod_zone_freepage_state(struct zone *zone, int nr_pages,
 	__mod_zone_page_state(zone, NR_FREE_PAGES, nr_pages);
 	if (is_migrate_cma(migratetype))
 		__mod_zone_page_state(zone, NR_FREE_CMA_PAGES, nr_pages);
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	else if (is_unmovable_isolate1(migratetype))
+		__mod_zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE1_PAGES, nr_pages);
+	else if (is_unmovable_isolate2(migratetype))
+		__mod_zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE2_PAGES, nr_pages);
+#endif
 }
 
 extern const char * const vmstat_text[];

@@ -217,6 +217,9 @@ void blk_queue_split(struct request_queue *q, struct bio **bio,
 		split->bi_opf |= REQ_NOMERGE;
 
 		bio_chain(split, *bio);
+	#ifdef CONFIG_HISI_BLK
+		hisi_blk_bio_queue_split(q, bio, split);
+	#endif
 		trace_block_split(q, split, (*bio)->bi_iter.bi_sector);
 		generic_make_request(*bio);
 		*bio = split;
@@ -702,6 +705,10 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 	 */
 	if (!ll_merge_requests_fn(q, req, next))
 		return 0;
+#ifdef CONFIG_HISI_BLK
+	if (!hisi_blk_bio_merge_allow(req, next->bio))
+		return 0;
+#endif
 
 	/*
 	 * If failfast settings disagree or any of the two is already
@@ -729,7 +736,9 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 	req->biotail = next->biotail;
 
 	req->__data_len += blk_rq_bytes(next);
-
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_bio_merge_done(q, req, next);
+#endif
 	elv_merge_requests(q, req, next);
 
 	/*
@@ -786,6 +795,10 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 
 	if (req_op(rq) != bio_op(bio))
 		return false;
+#ifdef CONFIG_HISI_BLK
+	if (!hisi_blk_bio_merge_allow(rq, bio))
+		return false;
+#endif
 
 	/* different data direction or already started, don't merge */
 	if (bio_data_dir(bio) != rq_data_dir(rq))

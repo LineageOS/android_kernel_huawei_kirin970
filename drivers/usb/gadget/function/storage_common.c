@@ -205,7 +205,7 @@ int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 		return PTR_ERR(filp);
 	}
 
-	if (!(filp->f_mode & FMODE_WRITE))
+	if (!(filp->f_mode & FMODE_WRITE)) /*[false alarm]:it is a false alarm*/
 		ro = 1;
 
 	inode = file_inode(filp);
@@ -439,6 +439,7 @@ ssize_t fsg_store_file(struct fsg_lun *curlun, struct rw_semaphore *filesem,
 		       const char *buf, size_t count)
 {
 	int		rc = 0;
+	static int	incdrom = 0;
 
 	if (curlun->prevent_medium_removal && fsg_lun_is_open(curlun)) {
 		LDBG(curlun, "eject attempt prevented\n");
@@ -457,9 +458,45 @@ ssize_t fsg_store_file(struct fsg_lun *curlun, struct rw_semaphore *filesem,
 		if (rc == 0)
 			curlun->unit_attention_data =
 					SS_NOT_READY_TO_READY_TRANSITION;
+
+		pr_info("fsg_store_file: count=%zu, buf=%pK, curlun=%pK\n", count, buf, curlun);
+		if (count > 3 && 0 == memcmp(&buf[count-4], ".iso", 4)) {
+			pr_info("buf=%s, buf[count-4]=%s\n", buf, &buf[count-4]);
+			curlun->cdrom = 1;
+			curlun->ro = 1;
+			curlun->removable = 1;
+			curlun->nofua = 1;
+			incdrom = 1;
+		} else if (count == strlen("none") && buf && 0 == memcmp(buf, "none", strlen("none"))) {
+			curlun->cdrom = 1;
+			curlun->ro = 1;
+			curlun->removable = 1;
+			curlun->nofua = 1;
+			incdrom = 0;
+			if (fsg_lun_is_open(curlun)) {
+				fsg_lun_close(curlun);
+				curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+			}
+		} else {
+			curlun->cdrom = 0;
+			curlun->ro = 0;
+			curlun->removable = 1;
+			curlun->nofua = 1;
+			incdrom = 0;
+		}
 	} else if (fsg_lun_is_open(curlun)) {
-		fsg_lun_close(curlun);
-		curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+		int needclose = 1;
+
+		if (incdrom) {
+			if (count == 4 && buf && 0 == memcmp(buf, "none", 4))
+				needclose = 1;
+			else
+				needclose = 0;
+		}
+		if (needclose) {
+			fsg_lun_close(curlun);
+			curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+		}
 	}
 	up_write(filesem);
 	return (rc < 0 ? rc : count);

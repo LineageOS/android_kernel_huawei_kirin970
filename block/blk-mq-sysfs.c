@@ -10,6 +10,7 @@
 #include <linux/smp.h>
 
 #include <linux/blk-mq.h>
+#include "blk.h"
 #include "blk-mq.h"
 #include "blk-mq-tag.h"
 
@@ -233,7 +234,28 @@ static ssize_t blk_mq_hw_sysfs_rq_list_show(struct blk_mq_hw_ctx *hctx,
 
 static ssize_t blk_mq_hw_sysfs_tags_show(struct blk_mq_hw_ctx *hctx, char *page)
 {
+#ifdef CONFIG_HISI_BLK
+	int ret = -EPERM;
+	ssize_t size = 0;
+
+	if (hctx->queue && hctx->queue->hisi_queue_ops && hctx->queue->hisi_queue_ops->mq_tag_sysfs_show_fn)
+		ret = hctx->queue->hisi_queue_ops->mq_tag_sysfs_show_fn(hctx->queue, hctx->tags, page, &size);
+
+	if (ret) {
+		if (likely(ret == -EPERM)) {
+			return blk_mq_tag_sysfs_show(hctx->tags, page);
+		} else {
+			pr_err("%s: mq_tag_sysfs_show_fn failed. err = %d \r\n", __func__, ret);
+		#if defined(CONFIG_HISI_DEBUG_FS) || defined(CONFIG_HISI_BLK_DEBUG)
+			BUG();
+		#endif
+			size = 0;
+		}
+	}
+	return size;
+#else
 	return blk_mq_tag_sysfs_show(hctx->tags, page);
+#endif
 }
 
 static ssize_t blk_mq_hw_sysfs_active_show(struct blk_mq_hw_ctx *hctx, char *page)
@@ -258,6 +280,59 @@ static ssize_t blk_mq_hw_sysfs_cpus_show(struct blk_mq_hw_ctx *hctx, char *page)
 	ret += sprintf(ret + page, "\n");
 	return ret;
 }
+
+#ifdef CONFIG_WBT
+static void blk_mq_stat_clear(struct blk_mq_hw_ctx *hctx)
+{
+	struct blk_mq_ctx *ctx;
+	unsigned int i;
+
+	hctx_for_each_ctx(hctx, ctx, i) {
+		blk_stat_init(&ctx->stat[0]);
+		blk_stat_init(&ctx->stat[1]);
+		blk_stat_init(&ctx->stat[2]);
+		blk_stat_init(&ctx->stat[3]);
+	}
+}
+
+/*lint -save -e713 -e715*/
+static ssize_t blk_mq_hw_sysfs_stat_store(struct blk_mq_hw_ctx *hctx,
+					  const char *page, size_t count)
+{
+	blk_mq_stat_clear(hctx);
+	return count;
+}
+/*lint -restore*/
+
+static ssize_t print_stat(char *page, struct blk_rq_stat *stat, const char *pre)
+{
+	/*lint -save -e421*/
+	return sprintf(page, "%s samples=%llu, mean=%lld, min=%lld, max=%lld\n",
+			pre, (long long) stat->nr_samples,
+			(long long) stat->mean, (long long) stat->min,
+			(long long) stat->max);
+	/*lint -restore*/
+}
+
+static ssize_t blk_mq_hw_sysfs_stat_show(struct blk_mq_hw_ctx *hctx, char *page)
+{
+	struct blk_rq_stat stat[4];
+	ssize_t ret;
+
+	blk_stat_init(&stat[0]);
+	blk_stat_init(&stat[1]);
+	blk_stat_init(&stat[2]);
+	blk_stat_init(&stat[3]);
+
+	blk_hctx_stat_get(hctx, stat);
+
+	ret = print_stat(page, &stat[0], "read :");
+	ret += print_stat(page + ret, &stat[1], "write:");
+	ret += print_stat(page + ret, &stat[2], "fg-read:");
+	ret += print_stat(page + ret, &stat[3], "fg-write:");
+	return ret;
+}
+#endif
 
 static struct blk_mq_ctx_sysfs_entry blk_mq_sysfs_dispatched = {
 	.attr = {.name = "dispatched", .mode = S_IRUGO },
@@ -318,6 +393,14 @@ static struct blk_mq_hw_ctx_sysfs_entry blk_mq_hw_sysfs_poll = {
 	.store = blk_mq_hw_sysfs_poll_store,
 };
 
+#ifdef CONFIG_WBT
+static struct blk_mq_hw_ctx_sysfs_entry blk_mq_hw_sysfs_stat = {
+	.attr = {.name = "stats", .mode = S_IRUGO | S_IWUSR },
+	.show = blk_mq_hw_sysfs_stat_show,
+	.store = blk_mq_hw_sysfs_stat_store,
+};
+#endif
+
 static struct attribute *default_hw_ctx_attrs[] = {
 	&blk_mq_hw_sysfs_queued.attr,
 	&blk_mq_hw_sysfs_run.attr,
@@ -327,6 +410,9 @@ static struct attribute *default_hw_ctx_attrs[] = {
 	&blk_mq_hw_sysfs_cpus.attr,
 	&blk_mq_hw_sysfs_active.attr,
 	&blk_mq_hw_sysfs_poll.attr,
+#ifdef CONFIG_WBT
+	&blk_mq_hw_sysfs_stat.attr,
+#endif
 	NULL,
 };
 

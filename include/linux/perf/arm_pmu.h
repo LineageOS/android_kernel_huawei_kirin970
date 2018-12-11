@@ -84,6 +84,12 @@ enum armpmu_attr_groups {
 	ARMPMU_NR_ATTR_GROUPS
 };
 
+enum armpmu_pmu_states {
+	ARM_PMU_STATE_OFF,
+	ARM_PMU_STATE_RUNNING,
+	ARM_PMU_STATE_GOING_DOWN,
+};
+
 struct arm_pmu {
 	struct pmu	pmu;
 	cpumask_t	active_irqs;
@@ -108,9 +114,14 @@ struct arm_pmu {
 	void		(*free_irq)(struct arm_pmu *);
 	int		(*map_event)(struct perf_event *event);
 	int		num_events;
+	int		pmu_state;
+	int		percpu_irq;
 	atomic_t	active_events;
 	struct mutex	reserve_mutex;
 	u64		max_period;
+#ifdef CONFIG_HISI_HW_PERF_EVENTS
+	u64		min_period;
+#endif
 	bool		secure_access; /* 32-bit ARM only */
 #define ARMV8_PMUV3_MAX_COMMON_EVENTS 0x40
 	DECLARE_BITMAP(pmceid_bitmap, ARMV8_PMUV3_MAX_COMMON_EVENTS);

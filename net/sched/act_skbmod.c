@@ -192,8 +192,7 @@ static void tcf_skbmod_cleanup(struct tc_action *a, int bind)
 	struct tcf_skbmod_params  *p;
 
 	p = rcu_dereference_protected(d->skbmod_p, 1);
-	if (p)
-		kfree_rcu(p, rcu);
+	kfree_rcu(p, rcu);
 }
 
 static int tcf_skbmod_dump(struct sk_buff *skb, struct tc_action *a,

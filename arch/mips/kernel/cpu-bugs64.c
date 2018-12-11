@@ -58,16 +58,7 @@ static inline void mult_sh_align_mod(long *v1, long *v2, long *w,
 	 */
 
 	local_irq_save(flags);
-	/*
-	 * The following code leads to a wrong result of the first
-	 * dsll32 when executed on R4000 rev. 2.2 or 3.0 (PRId
-	 * 00000422 or 00000430, respectively).
-	 *
-	 * See "MIPS R4000PC/SC Errata, Processor Revision 2.2 and
-	 * 3.0" by MIPS Technologies, Inc., errata #16 and #28 for
-	 * details.  I got no permission to duplicate them here,
-	 * sigh... --macro
-	 */
+	
 	asm volatile(
 		""
 		: "=r" (m1), "=r" (m2), "=r" (s)
@@ -191,15 +182,7 @@ static inline void check_daddi(void)
 
 	local_irq_save(flags);
 	handler = set_except_vector(EXCCODE_OV, handle_daddi_ov);
-	/*
-	 * The following code fails to trigger an overflow exception
-	 * when executed on R4000 rev. 2.2 or 3.0 (PRId 00000422 or
-	 * 00000430, respectively).
-	 *
-	 * See "MIPS R4000PC/SC Errata, Processor Revision 2.2 and
-	 * 3.0" by MIPS Technologies, Inc., erratum #23 for details.
-	 * I got no permission to duplicate it here, sigh... --macro
-	 */
+	
 	asm volatile(
 		".set	push\n\t"
 		".set	noat\n\t"
@@ -252,22 +235,7 @@ static inline void check_daddiu(void)
 
 	printk("Checking for the daddiu bug... ");
 
-	/*
-	 * The following code leads to a wrong result of daddiu when
-	 * executed on R4400 rev. 1.0 (PRId 00000440).
-	 *
-	 * See "MIPS R4400PC/SC Errata, Processor Revision 1.0" by
-	 * MIPS Technologies, Inc., erratum #7 for details.
-	 *
-	 * According to "MIPS R4000PC/SC Errata, Processor Revision
-	 * 2.2 and 3.0" by MIPS Technologies, Inc., erratum #41 this
-	 * problem affects R4000 rev. 2.2 and 3.0 (PRId 00000422 and
-	 * 00000430, respectively), too.  Testing failed to trigger it
-	 * so far.
-	 *
-	 * I got no permission to duplicate the errata here, sigh...
-	 * --macro
-	 */
+	
 	asm volatile(
 		".set	push\n\t"
 		".set	noat\n\t"

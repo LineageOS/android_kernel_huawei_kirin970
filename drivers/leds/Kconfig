@@ -662,4 +662,38 @@ config LEDS_MLXCPLD
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"
 
+config HISI_LEDS_HWTIMER
+	bool "LEDS_HISI Trigger"
+	depends on LEDS_TRIGGERS && LEDS_TRIGGER_TIMER
+	help
+	  This allows leds use hard ware timer.
+	  If unsure, say n.
+
+config HISI_LEDS_NODE_PERSIST
+	bool "LEDS_HISI Trigger"
+	depends on LEDS_TRIGGERS && LEDS_TRIGGER_TIMER
+	help
+	  This keep delay_on and delay_off dev node when led is off.
+	  If unsure, say n.
+
+config LEDS_HISI
+	bool "LEDS_HISI Trigger"
+	depends on LEDS_TRIGGERS && LEDS_TRIGGER_TIMER
+	help
+	  This allows LEDs to be controlled by hisi leds activity.
+	  If unsure, say n.
+
+config HISI_LEDS_BLUE_TP_COLOR_SWITCH
+	bool "LEDS_HISI Trigger"
+	depends on LEDS_HISI
+	help
+	  This allows green leds work on flash mode.
+	  If unsure, say n.
+
+config LEDS_HISI_SPMI
+	bool "LEDS_HISI_SPMI Trigger"
+	depends on LEDS_TRIGGERS && LEDS_TRIGGER_TIMER && HISI_SPMI && HISI_PMIC_PMU_SPMI
+	help
+	  This allows LEDs to be controlled by hisi leds activity.
+	  If unsure, say n.
 endif # NEW_LEDS

@@ -192,6 +192,8 @@ int elevator_init(struct request_queue *q, char *name)
 		return 0;
 
 	INIT_LIST_HEAD(&q->queue_head);
+	INIT_LIST_HEAD(&q->fg_head);
+	INIT_LIST_HEAD(&q->bg_head);
 	q->last_merge = NULL;
 	q->end_sector = 0;
 	q->boundary_rq = NULL;
@@ -384,6 +386,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	}
 
 	list_add(&rq->queuelist, entry);
+	queue_throtl_add_request(q, rq, false);
 }
 EXPORT_SYMBOL(elv_dispatch_sort);
 
@@ -404,6 +407,7 @@ void elv_dispatch_add_tail(struct request_queue *q, struct request *rq)
 	q->end_sector = rq_end_sector(rq);
 	q->boundary_rq = rq;
 	list_add_tail(&rq->queuelist, &q->queue_head);
+	queue_throtl_add_request(q, rq, false);
 }
 EXPORT_SYMBOL(elv_dispatch_add_tail);
 
@@ -563,6 +567,7 @@ void elv_requeue_request(struct request_queue *q, struct request *rq)
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
+		queue_throtl_dec_inflight(q, rq);
 		if (rq->cmd_flags & REQ_SORTED)
 			elv_deactivate_rq(q, rq);
 	}
@@ -613,12 +618,14 @@ void __elv_add_request(struct request_queue *q, struct request *rq, int where)
 	case ELEVATOR_INSERT_FRONT:
 		rq->cmd_flags |= REQ_SOFTBARRIER;
 		list_add(&rq->queuelist, &q->queue_head);
+		queue_throtl_add_request(q, rq, true);
 		break;
 
 	case ELEVATOR_INSERT_BACK:
 		rq->cmd_flags |= REQ_SOFTBARRIER;
 		elv_drain_elevator(q);
 		list_add_tail(&rq->queuelist, &q->queue_head);
+		queue_throtl_add_request(q, rq, false);
 		/*
 		 * We kick the queue here for the following reasons.
 		 * - The elevator might have returned NULL previously
@@ -735,6 +742,7 @@ void elv_completed_request(struct request_queue *q, struct request *rq)
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
+		queue_throtl_dec_inflight(q, rq);
 		if ((rq->cmd_flags & REQ_SORTED) &&
 		    e->type->ops.elevator_completed_req_fn)
 			e->type->ops.elevator_completed_req_fn(q, rq);

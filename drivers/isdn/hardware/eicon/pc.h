@@ -703,7 +703,6 @@ struct dual
 #define PROTCAP_FREE14    0x4000  /* not used                            */
 #define PROTCAP_EXTENSION 0x8000  /* used for future extensions          */
 /* -----------------------------------------------------------* */
-/* Onhook data transmission ETS30065901 */
 /* Message Type */
 /*#define RESERVED4                 0x4*/
 #define CALL_SETUP                0x80

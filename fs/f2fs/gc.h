@@ -8,6 +8,11 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <linux/ratelimit.h>
+
+#define F2FS_GC_DSM_INTERVAL      (200 * HZ)
+#define F2FS_GC_DSM_BURST         2
+
 #define GC_THREAD_MIN_WB_PAGES		1	/*
 						 * a threshold to determine
 						 * whether IO subsystem is idle
@@ -17,6 +22,14 @@
 #define DEF_GC_THREAD_MIN_SLEEP_TIME	30000	/* milliseconds */
 #define DEF_GC_THREAD_MAX_SLEEP_TIME	60000
 #define DEF_GC_THREAD_NOGC_SLEEP_TIME	300000	/* wait 5 min */
+
+/* choose candidates from sections which has age of more than 7 days */
+#define DEF_GC_THREAD_AGE_THRESHOLD	(60 * 60 * 24 * 7)
+#define DEF_GC_THREAD_DIRTY_RATE_THRESHOLD	20	/* select 20% oldest dirty section */
+#define DEF_GC_THREAD_DIRTY_COUNT_THRESHOLD	10	/* select at least 10 dirty section */
+#define DEF_GC_THREAD_AGE_WEIGHT	60	/* age weight */
+#define DEFAULT_ACCURACY_CLASS		10000
+
 #define LIMIT_INVALID_BLOCK	40 /* percentage over total user space */
 #define LIMIT_FREE_BLOCK	40 /* percentage over invalid + free space */
 
@@ -25,25 +38,35 @@
 /* Search max. number of dirty segments to select a victim segment */
 #define DEF_MAX_VICTIM_SEARCH 4096 /* covers 8GB */
 
-struct f2fs_gc_kthread {
-	struct task_struct *f2fs_gc_task;
-	wait_queue_head_t gc_wait_queue_head;
-
-	/* for gc sleep time */
-	unsigned int urgent_sleep_time;
-	unsigned int min_sleep_time;
-	unsigned int max_sleep_time;
-	unsigned int no_gc_sleep_time;
-
-	/* for changing gc mode */
-	unsigned int gc_idle;
-	unsigned int gc_urgent;
-	unsigned int gc_wake;
+/* GC preferences */
+enum {
+	GC_LIFETIME = 0,
+	GC_BALANCE,
+	GC_PERF,
+	GC_FRAG
 };
 
 struct gc_inode_list {
 	struct list_head ilist;
 	struct radix_tree_root iroot;
+};
+
+struct victim_info {
+	unsigned long long mtime;	/* mtime of section */
+	unsigned int segno;		/* section No. */
+};
+
+struct victim_entry {
+	struct rb_node rb_node;		/* rb node located in rb-tree */
+	union {
+		struct {
+			unsigned long long mtime;	/* mtime of section */
+			unsigned int segno;		/* segment No. */
+		};
+		struct victim_info vi;	/* victim info */
+	};
+	struct list_head list;
+	//unsigned int vblocks;
 };
 
 /*

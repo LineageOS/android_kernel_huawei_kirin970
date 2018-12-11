@@ -209,3 +209,9 @@ config CIFS_FSCACHE
 	    to be cached locally on disk through the general filesystem cache
 	    manager. If unsure, say N.
 
+config CIFS_DEFAULT
+	string "Default CIFS iocharset Option"
+	depends on CIFS
+	default "utf8"
+	help
+	  default iocharset for cifs.

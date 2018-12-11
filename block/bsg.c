@@ -101,7 +101,7 @@ static void bsg_free_command(struct bsg_command *bc)
 
 	wake_up(&bd->wq_free);
 }
-
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 static struct bsg_command *bsg_alloc_command(struct bsg_device *bd)
 {
 	struct bsg_command *bc = ERR_PTR(-EINVAL);
@@ -130,12 +130,12 @@ out:
 	spin_unlock_irq(&bd->lock);
 	return bc;
 }
-
+#endif
 static inline struct hlist_head *bsg_dev_idx_hash(int index)
 {
 	return &bsg_device_list[index & (BSG_LIST_ARRAY_SIZE - 1)];
 }
-
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 static int blk_fill_sgv4_hdr_rq(struct request_queue *q, struct request *rq,
 				struct sg_io_v4 *hdr, struct bsg_device *bd,
 				fmode_t has_write_perm)
@@ -344,7 +344,7 @@ static void bsg_add_command(struct bsg_device *bd, struct request_queue *q,
 	rq->end_io_data = bc;
 	blk_execute_rq_nowait(q, NULL, rq, at_head, bsg_rq_end_io);
 }
-
+#endif
 static struct bsg_command *bsg_next_done_cmd(struct bsg_device *bd)
 {
 	struct bsg_command *bc = NULL;
@@ -508,7 +508,7 @@ static int bsg_complete_all_commands(struct bsg_device *bd)
 
 	return ret;
 }
-
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 static int
 __bsg_read(char __user *buf, size_t count, struct bsg_device *bd,
 	   const struct iovec *iov, ssize_t *bytes_read)
@@ -551,7 +551,7 @@ __bsg_read(char __user *buf, size_t count, struct bsg_device *bd,
 
 	return ret;
 }
-
+#endif
 static inline void bsg_set_block(struct bsg_device *bd, struct file *file)
 {
 	if (file->f_flags & O_NONBLOCK)
@@ -559,7 +559,7 @@ static inline void bsg_set_block(struct bsg_device *bd, struct file *file)
 	else
 		set_bit(BSG_F_BLOCK, &bd->flags);
 }
-
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 /*
  * Check if the error is a "real" error that we should return.
  */
@@ -675,7 +675,7 @@ bsg_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 	dprintk("%s: returning %Zd\n", bd->name, bytes_written);
 	return bytes_written;
 }
-
+#endif
 static struct bsg_device *bsg_alloc_device(void)
 {
 	struct bsg_device *bd;
@@ -846,7 +846,7 @@ static int bsg_release(struct inode *inode, struct file *file)
 	file->private_data = NULL;
 	return bsg_put_device(bd);
 }
-
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 static unsigned int bsg_poll(struct file *file, poll_table *wait)
 {
 	struct bsg_device *bd = file->private_data;
@@ -944,16 +944,18 @@ static long bsg_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #endif
 	}
 }
-
+#endif
 static const struct file_operations bsg_fops = {
+	.open		=	bsg_open,
+	.release	=	bsg_release,
+	.owner		=	THIS_MODULE,
+#ifdef CONFIG_BSG_ACCESS_INTERFACE
 	.read		=	bsg_read,
 	.write		=	bsg_write,
 	.poll		=	bsg_poll,
-	.open		=	bsg_open,
-	.release	=	bsg_release,
 	.unlocked_ioctl	=	bsg_ioctl,
-	.owner		=	THIS_MODULE,
 	.llseek		=	default_llseek,
+#endif
 };
 
 void bsg_unregister_queue(struct request_queue *q)

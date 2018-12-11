@@ -24,12 +24,19 @@
 
 #include <asm/cputype.h>
 #include <asm/topology.h>
+#include <asm/smp_plat.h>
 
 static DEFINE_PER_CPU(unsigned long, cpu_scale) = SCHED_CAPACITY_SCALE;
 
 unsigned long scale_cpu_capacity(struct sched_domain *sd, int cpu)
 {
+#ifdef CONFIG_CPU_FREQ
+	unsigned long max_freq_scale = cpufreq_scale_max_freq_capacity(cpu);
+
+	return per_cpu(cpu_scale, cpu) * max_freq_scale >> SCHED_CAPACITY_SHIFT;
+#else
 	return per_cpu(cpu_scale, cpu);
+#endif
 }
 
 static void set_capacity_scale(unsigned int cpu, unsigned long capacity)
@@ -220,6 +227,92 @@ out:
 struct cpu_topology cpu_topology[NR_CPUS];
 EXPORT_SYMBOL_GPL(cpu_topology);
 
+#ifdef CONFIG_ARCH_HISI
+static const char * const little_cores[] = {
+	"arm,cortex-a53",
+	NULL,
+};
+
+static bool is_little_cpu(struct device_node *cn)
+{
+	const char * const *lc;
+	for (lc = little_cores; *lc; lc++)
+		if (of_device_is_compatible(cn, *lc))
+			return true;
+	return false;
+}
+
+void __init arch_get_fast_and_slow_cpus(struct cpumask *fast,
+					struct cpumask *slow)
+{
+	struct device_node *cn = NULL;
+	int cpu;
+
+	cpumask_clear(fast);
+	cpumask_clear(slow);
+
+	/*
+	 * Else, parse device tree for little cores.
+	 */
+	while ((cn = of_find_node_by_type(cn, "cpu"))) {
+		const u32 *mpidr;
+		int len;
+
+		mpidr = of_get_property(cn, "reg", &len);
+		if (!mpidr || len != 8) {
+			pr_err("%s missing reg property\n", cn->full_name);
+			continue;
+		}
+
+		cpu = get_logical_index(be32_to_cpup(mpidr+1));
+		if (cpu == -EINVAL) {
+			pr_err("couldn't get logical index for mpidr %x\n",
+							be32_to_cpup(mpidr+1));
+			break;
+		}
+
+		if (is_little_cpu(cn))
+			cpumask_set_cpu(cpu, slow);
+		else
+			cpumask_set_cpu(cpu, fast);
+	}
+
+	if (!cpumask_empty(fast) && !cpumask_empty(slow))
+		return;
+
+	/*
+	 * We didn't find both big and little cores so let's call all cores
+	 * fast as this will keep the system running, with all cores being
+	 * treated equal.
+	 */
+	cpumask_setall(fast);
+	cpumask_clear(slow);
+}
+
+struct cpumask slow_cpu_mask;
+struct cpumask fast_cpu_mask;
+void hisi_get_fast_cpus(struct cpumask *cpumask)
+{
+	cpumask_copy(cpumask, &fast_cpu_mask);
+}
+EXPORT_SYMBOL(hisi_get_fast_cpus);
+
+void hisi_get_slow_cpus(struct cpumask *cpumask)
+{
+	cpumask_copy(cpumask, &slow_cpu_mask);
+}
+EXPORT_SYMBOL(hisi_get_slow_cpus);
+
+int hisi_test_fast_cpu(int cpu)
+{
+	if (cpumask_test_cpu(cpu, &fast_cpu_mask))
+		return 1;
+	else
+		return 0;
+}
+EXPORT_SYMBOL(hisi_test_fast_cpu);
+#endif
+
 /* sd energy functions */
 static inline
 const struct sched_group_energy * const cpu_cluster_energy(int cpu)
@@ -382,4 +475,8 @@ void __init init_cpu_topology(void)
 		set_sched_topology(arm64_topology);
 
 	init_sched_energy_costs();
+
+#ifdef CONFIG_HISI_EAS_SCHED
+	arch_get_fast_and_slow_cpus(&fast_cpu_mask, &slow_cpu_mask);
+#endif
 }

@@ -728,3 +728,11 @@ config TCP_MD5SIG
 	  on the Internet.
 
 	  If unsure, say N.
+
+config TCP_AUTOTUNING
+	bool "tcp autotuning congestion avoid"
+	default n
+
+config TCP_NODELAY
+	bool "tcp no delay"
+	default n

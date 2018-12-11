@@ -52,6 +52,10 @@ static void put_prev_task_idle(struct rq *rq, struct task_struct *prev)
 
 static void task_tick_idle(struct rq *rq, struct task_struct *curr, int queued)
 {
+#ifdef CONFIG_HISI_CPUFREQ
+	/* Kick cpufreq. This will ensure slack-timer's freq update */
+	cpufreq_update_this_cpu(rq, 0);
+#endif
 }
 
 static void set_curr_task_idle(struct rq *rq)

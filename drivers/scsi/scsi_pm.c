@@ -13,6 +13,8 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_driver.h>
 #include <scsi/scsi_host.h>
+#include <linux/blkdev.h>
+#include <linux/blk-mq.h>
 
 #include "scsi_priv.h"
 
@@ -53,15 +55,18 @@ static int scsi_dev_type_suspend(struct device *dev,
 {
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 	int err;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct Scsi_Host *shost = sdev->host;
 
 	/* flush pending in-flight resume operations, suspend is synchronous */
 	async_synchronize_full_domain(&scsi_sd_pm_domain);
 
-	err = scsi_device_quiesce(to_scsi_device(dev));
+	err = (shost && (shost->queue_quirk_flag & SHOST_QUIRK(SHOST_QUIRK_SCSI_QUIESCE_IN_LLD))) ?
+		0 : scsi_device_quiesce(to_scsi_device(dev));
 	if (err == 0) {
 		err = cb(dev, pm);
 		if (err)
-			scsi_device_resume(to_scsi_device(dev));
+                        scsi_device_resume(to_scsi_device(dev));
 	}
 	dev_dbg(dev, "scsi suspend: %d\n", err);
 	return err;
@@ -72,11 +77,13 @@ static int scsi_dev_type_resume(struct device *dev,
 {
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 	int err = 0;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct Scsi_Host *shost = sdev->host;
 
 	err = cb(dev, pm);
-	scsi_device_resume(to_scsi_device(dev));
+	if (!shost || (!(shost->queue_quirk_flag & SHOST_QUIRK(SHOST_QUIRK_SCSI_QUIESCE_IN_LLD))))
+		scsi_device_resume(to_scsi_device(dev));
 	dev_dbg(dev, "scsi resume: %d\n", err);
-
 	if (err == 0) {
 		pm_runtime_disable(dev);
 		pm_runtime_set_active(dev);

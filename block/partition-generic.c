@@ -18,13 +18,14 @@
 #include <linux/genhd.h>
 #include <linux/dax.h>
 #include <linux/blktrace_api.h>
+#include "blk.h"
 
 #include "partitions/check.h"
 
 #ifdef CONFIG_BLK_DEV_MD
 extern void md_autodetect_dev(dev_t dev);
 #endif
- 
+
 /*
  * disk_name() is used by partition check code and the genhd driver.
  * It formats the devicename of the indicated disk into
@@ -467,6 +468,7 @@ rescan:
 		}
 		return -EIO;
 	}
+	hisi_blk_check_partition_done(disk, true);
 	/*
 	 * If any partition code tried to read beyond EOD, try
 	 * unlocking native capacity even if partition table is

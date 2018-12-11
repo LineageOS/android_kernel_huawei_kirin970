@@ -6379,17 +6379,18 @@ static void lcb_shutdown(struct hfi1_devdata *dd, int abort)
  *
  * The expectation is that the caller of this routine would have taken
  * care of properly transitioning the link into the correct state.
- * NOTE: the caller needs to acquire the dd->dc8051_lock lock
- *       before calling this function.
  */
-static void _dc_shutdown(struct hfi1_devdata *dd)
+static void dc_shutdown(struct hfi1_devdata *dd)
 {
-	lockdep_assert_held(&dd->dc8051_lock);
+	unsigned long flags;
 
-	if (dd->dc_shutdown)
+	spin_lock_irqsave(&dd->dc8051_lock, flags);
+	if (dd->dc_shutdown) {
+		spin_unlock_irqrestore(&dd->dc8051_lock, flags);
 		return;
-
+	}
 	dd->dc_shutdown = 1;
+	spin_unlock_irqrestore(&dd->dc8051_lock, flags);
 	/* Shutdown the LCB */
 	lcb_shutdown(dd, 1);
 	/*
@@ -6400,45 +6401,35 @@ static void _dc_shutdown(struct hfi1_devdata *dd)
 	write_csr(dd, DC_DC8051_CFG_RST, 0x1);
 }
 
-static void dc_shutdown(struct hfi1_devdata *dd)
-{
-	mutex_lock(&dd->dc8051_lock);
-	_dc_shutdown(dd);
-	mutex_unlock(&dd->dc8051_lock);
-}
-
 /*
  * Calling this after the DC has been brought out of reset should not
  * do any damage.
- * NOTE: the caller needs to acquire the dd->dc8051_lock lock
- *       before calling this function.
  */
-static void _dc_start(struct hfi1_devdata *dd)
+static void dc_start(struct hfi1_devdata *dd)
 {
-	lockdep_assert_held(&dd->dc8051_lock);
+	unsigned long flags;
+	int ret;
 
+	spin_lock_irqsave(&dd->dc8051_lock, flags);
 	if (!dd->dc_shutdown)
-		return;
-
+		goto done;
+	spin_unlock_irqrestore(&dd->dc8051_lock, flags);
 	/* Take the 8051 out of reset */
 	write_csr(dd, DC_DC8051_CFG_RST, 0ull);
 	/* Wait until 8051 is ready */
-	if (wait_fm_ready(dd, TIMEOUT_8051_START))
+	ret = wait_fm_ready(dd, TIMEOUT_8051_START);
+	if (ret) {
 		dd_dev_err(dd, "%s: timeout starting 8051 firmware\n",
 			   __func__);
-
+	}
 	/* Take away reset for LCB and RX FPE (set in lcb_shutdown). */
 	write_csr(dd, DCC_CFG_RESET, 0x10);
 	/* lcb_shutdown() with abort=1 does not restore these */
 	write_csr(dd, DC_LCB_ERR_EN, dd->lcb_err_en);
+	spin_lock_irqsave(&dd->dc8051_lock, flags);
 	dd->dc_shutdown = 0;
-}
-
-static void dc_start(struct hfi1_devdata *dd)
-{
-	mutex_lock(&dd->dc8051_lock);
-	_dc_start(dd);
-	mutex_unlock(&dd->dc8051_lock);
+done:
+	spin_unlock_irqrestore(&dd->dc8051_lock, flags);
 }
 
 /*
@@ -8427,11 +8418,16 @@ static int do_8051_command(
 {
 	u64 reg, completed;
 	int return_code;
+	unsigned long flags;
 	unsigned long timeout;
 
 	hfi1_cdbg(DC8051, "type %d, data 0x%012llx", type, in_data);
 
-	mutex_lock(&dd->dc8051_lock);
+	/*
+	 * Alternative to holding the lock for a long time:
+	 * - keep busy wait - have other users bounce off
+	 */
+	spin_lock_irqsave(&dd->dc8051_lock, flags);
 
 	/* We can't send any commands to the 8051 if it's in reset */
 	if (dd->dc_shutdown) {
@@ -8457,8 +8453,10 @@ static int do_8051_command(
 			return_code = -ENXIO;
 			goto fail;
 		}
-		_dc_shutdown(dd);
-		_dc_start(dd);
+		spin_unlock_irqrestore(&dd->dc8051_lock, flags);
+		dc_shutdown(dd);
+		dc_start(dd);
+		spin_lock_irqsave(&dd->dc8051_lock, flags);
 	}
 
 	/*
@@ -8536,7 +8534,8 @@ static int do_8051_command(
 	write_csr(dd, DC_DC8051_CFG_HOST_CMD_0, 0);
 
 fail:
-	mutex_unlock(&dd->dc8051_lock);
+	spin_unlock_irqrestore(&dd->dc8051_lock, flags);
+
 	return return_code;
 }
 
@@ -9490,11 +9489,8 @@ static int test_qsfp_read(struct hfi1_pportdata *ppd)
 	int ret;
 	u8 status;
 
-	/*
-	 * Report success if not a QSFP or, if it is a QSFP, but the cable is
-	 * not present
-	 */
-	if (ppd->port_type != PORT_TYPE_QSFP || !qsfp_mod_present(ppd))
+	/* report success if not a QSFP */
+	if (ppd->port_type != PORT_TYPE_QSFP)
 		return 0;
 
 	/* read byte 2, the status byte */
@@ -11850,10 +11846,6 @@ static void free_cntrs(struct hfi1_devdata *dd)
 	dd->scntrs = NULL;
 	kfree(dd->cntrnames);
 	dd->cntrnames = NULL;
-	if (dd->update_cntr_wq) {
-		destroy_workqueue(dd->update_cntr_wq);
-		dd->update_cntr_wq = NULL;
-	}
 }
 
 static u64 read_dev_port_cntr(struct hfi1_devdata *dd, struct cntr_entry *entry,
@@ -12009,7 +12001,7 @@ u64 write_port_cntr(struct hfi1_pportdata *ppd, int index, int vl, u64 data)
 	return write_dev_port_cntr(ppd->dd, entry, sval, ppd, vl, data);
 }
 
-static void do_update_synth_timer(struct work_struct *work)
+static void update_synth_timer(unsigned long opaque)
 {
 	u64 cur_tx;
 	u64 cur_rx;
@@ -12018,8 +12010,8 @@ static void do_update_synth_timer(struct work_struct *work)
 	int i, j, vl;
 	struct hfi1_pportdata *ppd;
 	struct cntr_entry *entry;
-	struct hfi1_devdata *dd = container_of(work, struct hfi1_devdata,
-					       update_cntr_work);
+
+	struct hfi1_devdata *dd = (struct hfi1_devdata *)opaque;
 
 	/*
 	 * Rather than keep beating on the CSRs pick a minimal set that we can
@@ -12102,13 +12094,7 @@ static void do_update_synth_timer(struct work_struct *work)
 	} else {
 		hfi1_cdbg(CNTR, "[%d] No update necessary", dd->unit);
 	}
-}
 
-static void update_synth_timer(unsigned long opaque)
-{
-	struct hfi1_devdata *dd = (struct hfi1_devdata *)opaque;
-
-	queue_work(dd->update_cntr_wq, &dd->update_cntr_work);
 	mod_timer(&dd->synth_stats_timer, jiffies + HZ * SYNTH_CNT_TIME);
 }
 
@@ -12343,13 +12329,6 @@ static int init_cntrs(struct hfi1_devdata *dd)
 	/* CPU counters need to be allocated and zeroed */
 	if (init_cpu_counters(dd))
 		goto bail;
-
-	dd->update_cntr_wq = alloc_ordered_workqueue("hfi1_update_cntr_%d",
-						     WQ_MEM_RECLAIM, dd->unit);
-	if (!dd->update_cntr_wq)
-		goto bail;
-
-	INIT_WORK(&dd->update_cntr_work, do_update_synth_timer);
 
 	mod_timer(&dd->synth_stats_timer, jiffies + HZ * SYNTH_CNT_TIME);
 	return 0;

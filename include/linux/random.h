@@ -41,7 +41,15 @@ extern void get_random_bytes_arch(void *buf, int nbytes);
 #ifndef MODULE
 extern const struct file_operations random_fops, urandom_fops;
 #endif
-
+#ifdef CONFIG_64BIT
+# ifdef __LITTLE_ENDIAN
+#  define CANARY_MASK 0xffffffffffffff00UL
+# else /* big endian, 64 bits: */
+#  define CANARY_MASK 0x00ffffffffffffffUL
+# endif
+#else /* 32 bits: */
+# define CANARY_MASK 0xffffffffUL
+#endif
 unsigned int get_random_int(void);
 unsigned long get_random_long(void);
 unsigned long randomize_page(unsigned long start, unsigned long range);

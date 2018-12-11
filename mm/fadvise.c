@@ -68,6 +68,10 @@ SYSCALL_DEFINE4(fadvise64_64, int, fd, loff_t, offset, loff_t, len, int, advice)
 		goto out;
 	}
 
+	pgcache_log_path(BIT_READAHEAD_SYSCALL_DUMP, &(f.file->f_path),
+			"syscall fadvise64(fd:%d offset:%ld count:%ld advice:%d)",
+			fd, offset, len, advice);
+
 	/* Careful about overflows. Len == 0 means "as much as possible" */
 	endbyte = offset + len;
 	if (!len || endbyte < len)

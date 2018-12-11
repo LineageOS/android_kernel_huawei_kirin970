@@ -16,7 +16,7 @@ struct mnt_namespace {
 	u64 event;
 	unsigned int		mounts; /* # of mounts in the namespace */
 	unsigned int		pending_mounts;
-};
+} __randomize_layout;
 
 struct mnt_pcp {
 	int mnt_count;

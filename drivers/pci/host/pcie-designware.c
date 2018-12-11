@@ -238,7 +238,7 @@ static void dw_pcie_prog_outbound_atu(struct pcie_port *pp, int index,
 		else
 			val = dw_pcie_readl_rc(pp, PCIE_ATU_CR2);
 
-		if (val == PCIE_ATU_ENABLE)
+		if (val & PCIE_ATU_ENABLE)
 			return;
 
 		usleep_range(LINK_WAIT_IATU_MIN, LINK_WAIT_IATU_MAX);
@@ -513,7 +513,26 @@ static u8 dw_pcie_iatu_unroll_enabled(struct pcie_port *pp)
 
 	return 0;
 }
+#ifdef CONFIG_PCIE_KIRIN
+int plat_pcie_host_init(struct pcie_port *pp, struct device *dev,
+			struct list_head *resources)
+{
+	struct resource_entry *win;
+	int ret = 0;
 
+	if (pp->ops->host_init)
+		ret = pp->ops->host_init(pp);
+
+	if (ret){
+		resource_list_for_each_entry(win, resources) {
+			if (resource_type(win->res) == IORESOURCE_MEM)
+				devm_release_resource(dev, win->res);
+		}
+	}
+
+	return ret;
+}
+#endif
 int dw_pcie_host_init(struct pcie_port *pp)
 {
 	struct device_node *np = pp->dev->of_node;
@@ -636,9 +655,14 @@ int dw_pcie_host_init(struct pcie_port *pp)
 				goto error;
 		}
 	}
-
+#ifdef CONFIG_PCIE_KIRIN
+	ret = plat_pcie_host_init(pp, &pdev->dev, &res);
+	if (ret)
+		goto error;
+#else
 	if (pp->ops->host_init)
 		pp->ops->host_init(pp);
+#endif
 
 	pp->root_bus_nr = pp->busn->start;
 	if (IS_ENABLED(CONFIG_PCI_MSI)) {

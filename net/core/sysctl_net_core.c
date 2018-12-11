@@ -22,6 +22,13 @@
 #include <net/busy_poll.h>
 #include <net/pkt_sched.h>
 
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
+#ifdef CONFIG_HUAWEI_BASTET
+extern int g_FastGrabDscp;
+#endif
 static int zero = 0;
 static int one = 1;
 static int min_sndbuf = SOCK_MIN_SNDBUF;
@@ -419,6 +426,43 @@ static struct ctl_table net_core_table[] = {
 		.extra1		= &one,
 		.extra2		= &max_skb_frags,
 	},
+#ifdef CONFIG_HUAWEI_BASTET
+	{
+		.procname	= "fg_dscp",
+		.data		= &g_FastGrabDscp,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+#endif
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	{
+		.procname	= "netmeasure",
+		.maxlen		= NM_SAMPLE_VALVE_BUF_MAX,
+		.mode		= 0600,
+		.proc_handler	= proc_sample_valve
+	},
+	{
+		.procname	= "netmeasure_timeout",
+		.data		= &network_measure_timeouts,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "netmeasure_tcp",
+		.data		= &network_measure_tcp,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "netmeasure_sampled_uids",
+		.maxlen		= NM_SAMPLE_UID_BUF_MAX,
+		.mode		= 0600,
+		.proc_handler	= proc_sample_uid_list
+	},
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 	{ }
 };
 

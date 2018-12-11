@@ -28,7 +28,7 @@
 
 	.align	11
 
-ENTRY(__kvm_hyp_init)
+ENTRY_NOTAG(__kvm_hyp_init)
 	ventry	__invalid		// Synchronous EL2t
 	ventry	__invalid		// IRQ EL2t
 	ventry	__invalid		// FIQ EL2t

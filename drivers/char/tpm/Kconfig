@@ -151,6 +151,11 @@ config TCG_VTPM_PROXY
 	  /dev/vtpmX and a server-side file descriptor on which the vTPM
 	  can receive commands.
 
+config TCG_TEE
+	tristate "TPM TA"
+	---help---
+	Software TPM implementation utilizing TrustedCore Trusted Execution
+	Environment.
 
 source "drivers/char/tpm/st33zp24/Kconfig"
 endif # TCG_TPM

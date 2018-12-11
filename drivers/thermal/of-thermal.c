@@ -51,6 +51,9 @@ struct __thermal_bind_params {
 	unsigned int usage;
 	unsigned long min;
 	unsigned long max;
+#ifdef CONFIG_HISI_IPA_THERMAL
+	bool is_soc_cdev;
+#endif
 };
 
 /**
@@ -278,10 +281,17 @@ static int of_thermal_set_mode(struct thermal_zone_device *tz,
 
 	mutex_lock(&tz->lock);
 
-	if (mode == THERMAL_DEVICE_ENABLED)
+	if (mode == THERMAL_DEVICE_ENABLED ) {
 		tz->polling_delay = data->polling_delay;
-	else
+#ifdef CONFIG_HISI_IPA_THERMAL
+		tz->passive_delay = data->passive_delay;
+#endif
+	} else {
 		tz->polling_delay = 0;
+#ifdef CONFIG_HISI_IPA_THERMAL
+		tz->passive_delay = 0;
+#endif
+	}
 
 	mutex_unlock(&tz->lock);
 
@@ -324,6 +334,9 @@ static int of_thermal_set_trip_temp(struct thermal_zone_device *tz, int trip,
 
 	if (trip >= data->ntrips || trip < 0)
 		return -EDOM;
+
+	if(!data->ops)
+		return -EINVAL;
 
 	if (data->ops->set_trip_temp) {
 		int ret;
@@ -430,7 +443,11 @@ thermal_zone_of_add_sensor(struct device_node *zone,
 		tzd->ops->set_trips = of_thermal_set_trips;
 
 	if (ops->set_emul_temp)
+#ifdef CONFIG_HISI_IPA_THERMAL
+		tzd->ops->set_emul_temp = NULL;
+#else
 		tzd->ops->set_emul_temp = of_thermal_set_emul_temp;
+#endif
 
 	mutex_unlock(&tzd->lock);
 
@@ -705,9 +722,18 @@ static int thermal_of_populate_bind_params(struct device_node *np,
 		goto end;
 	}
 	__tbp->cooling_device = cooling_spec.np;
+#ifdef CONFIG_HISI_IPA_THERMAL
 	if (cooling_spec.args_count >= 2) { /* at least min and max */
 		__tbp->min = cooling_spec.args[0];
 		__tbp->max = cooling_spec.args[1];
+		if (cooling_spec.args_count > 2)
+			__tbp->is_soc_cdev =
+				cooling_spec.args[2] > 0 ? true : false;
+#else
+	if (cooling_spec.args_count >= 2) { /* at least min and max */
+		__tbp->min = cooling_spec.args[0];
+		__tbp->max = cooling_spec.args[1];
+#endif
 	} else {
 		pr_err("wrong reference to cooling device, missing limits\n");
 	}
@@ -717,6 +743,33 @@ end:
 
 	return ret;
 }
+
+#ifdef CONFIG_HISI_IPA_THERMAL
+bool thermal_of_get_cdev_type(struct thermal_zone_device *tzd,
+			struct thermal_cooling_device *cdev)
+{
+	struct __thermal_zone *tz;
+	int i;
+	struct __thermal_bind_params *tbp;
+
+	if (!tzd)
+		return false;
+
+	tz = (struct __thermal_zone *)tzd->devdata;
+	if (IS_ERR_OR_NULL(tz))
+		return false;
+
+	for (i = 0; i < tz->num_tbps; i++) {
+		tbp = tz->tbps + i;
+
+		if (tbp->cooling_device == cdev->np)
+			return tbp->is_soc_cdev;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(thermal_of_get_cdev_type);
+#endif
 
 /**
  * It maps 'enum thermal_trip_type' found in include/linux/thermal.h
@@ -749,7 +802,7 @@ static int thermal_of_get_trip_type(struct device_node *np,
 	if (err < 0)
 		return err;
 
-	for (i = 0; i < ARRAY_SIZE(trip_types); i++)
+	for (i = 0; i < ARRAY_SIZE(trip_types); i++)/*lint !e574*/
 		if (!strcasecmp(t, trip_types[i])) {
 			*type = i;
 			return 0;
@@ -946,6 +999,38 @@ static inline void of_thermal_free_zone(struct __thermal_zone *tz)
 	kfree(tz);
 }
 
+#ifdef CONFIG_HISI_THERMAL_SPM
+int of_thermal_get_num_tbps(struct thermal_zone_device *tz)
+{
+	struct __thermal_zone *data = tz->devdata;
+
+	return data->num_tbps;
+}
+EXPORT_SYMBOL(of_thermal_get_num_tbps);
+
+int of_thermal_get_actor_weight(struct thermal_zone_device *tz, int i,
+				enum ipa_actor *actor, unsigned int *weight)
+{
+	struct __thermal_zone *data = tz->devdata;
+
+	if (i >= data->num_tbps || i < 0)
+		return -EDOM;
+
+	if (!strncmp(data->tbps[i].cooling_device->name, "cluster0", sizeof("cluster0") - 1))
+		*actor = IPA_CLUSTER0;
+	else if (!strncmp(data->tbps[i].cooling_device->name, "cluster1", sizeof("cluster1") - 1))
+		*actor = IPA_CLUSTER1;
+	else
+		*actor = IPA_GPU;
+
+	*weight = data->tbps[i].usage;
+	pr_err("IPA: matched actor: %d, weight: %d\n", *actor, *weight);
+
+	return 0;
+}
+EXPORT_SYMBOL(of_thermal_get_actor_weight);
+#endif
+
 /**
  * of_parse_thermal_zones - parse device tree thermal data
  *
@@ -963,6 +1048,9 @@ int __init of_parse_thermal_zones(void)
 	struct device_node *np, *child;
 	struct __thermal_zone *tz;
 	struct thermal_zone_device_ops *ops;
+#ifdef CONFIG_HISI_IPA_THERMAL
+	const char *gov_name;
+#endif
 
 	np = of_find_node_by_name(NULL, "thermal-zones");
 	if (!np) {
@@ -994,11 +1082,33 @@ int __init of_parse_thermal_zones(void)
 			goto exit_free;
 		}
 
+#ifdef CONFIG_HISI_IPA_THERMAL
+		/* set power allocator governor as defualt */
+		if (!of_property_read_string(child, "governor_name", (const char **)&gov_name))
+			strncpy(tzp->governor_name, gov_name, sizeof(tzp->governor_name));
+#endif
+
 		/* No hwmon because there might be hwmon drivers registering */
 		tzp->no_hwmon = true;
 
+#ifdef CONFIG_HISI_IPA_THERMAL
+		/*tzp->num_tbps?*/
+		/*tzp->tbp?*/
+		if (!of_property_read_u32(child, "k_po", &prop))
+			tzp->k_po = prop;
+		if (!of_property_read_u32(child, "k_pu", &prop))
+			tzp->k_pu = prop;
+		if (!of_property_read_u32(child, "k_i", &prop))
+			tzp->k_i = prop;
+		if (!of_property_read_u32(child, "integral_cutoff", &prop))
+			tzp->integral_cutoff = prop;
+#endif
 		if (!of_property_read_u32(child, "sustainable-power", &prop))
 			tzp->sustainable_power = prop;
+
+#ifdef CONFIG_HISI_IPA_THERMAL
+		tzp->max_sustainable_power = tzp->sustainable_power;
+#endif
 
 		for (i = 0; i < tz->ntrips; i++)
 			mask |= 1 << i;
@@ -1020,7 +1130,7 @@ int __init of_parse_thermal_zones(void)
 			of_thermal_free_zone(tz);
 			/* attempting to build remaining zones still */
 		}
-	}
+	}/*lint !e593*/
 	of_node_put(np);
 
 	return 0;

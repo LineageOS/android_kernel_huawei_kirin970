@@ -26,6 +26,11 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/fence.h>
 
+#ifdef CONFIG_HW_ZEROHUNG
+#include <chipset_common/hwzrhung/zrhung.h>
+#include "sync_debug.h"
+#endif
+
 EXPORT_TRACEPOINT_SYMBOL(fence_annotate_wait_on);
 EXPORT_TRACEPOINT_SYMBOL(fence_emit);
 
@@ -559,3 +564,19 @@ fence_init(struct fence *fence, const struct fence_ops *ops,
 	trace_fence_init(fence);
 }
 EXPORT_SYMBOL(fence_init);
+
+
+#ifdef CONFIG_HW_ZEROHUNG
+void fencewp_report(long timeout, bool dump)
+{
+	char fence_buf[128] = {0};
+
+	if (dump == true) {
+		sync_dump();
+	}
+
+
+	snprintf(fence_buf, sizeof(fence_buf), "fence timeout after %dms\n", jiffies_to_msecs(timeout));
+	zrhung_send_event(ZRHUNG_WP_FENCE, "K", fence_buf);
+}
+#endif

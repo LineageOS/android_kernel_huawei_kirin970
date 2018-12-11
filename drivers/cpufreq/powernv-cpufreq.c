@@ -260,9 +260,9 @@ static int init_powernv_pstates(void)
 
 		if (id == pstate_max)
 			powernv_pstate_info.max = i;
-		if (id == pstate_nominal)
+		else if (id == pstate_nominal)
 			powernv_pstate_info.nominal = i;
-		if (id == pstate_min)
+		else if (id == pstate_min)
 			powernv_pstate_info.min = i;
 	}
 

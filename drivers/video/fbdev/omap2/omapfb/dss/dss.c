@@ -941,13 +941,11 @@ static int dss_init_features(struct platform_device *pdev)
 	return 0;
 }
 
-static void dss_uninit_ports(struct platform_device *pdev);
-
 static int dss_init_ports(struct platform_device *pdev)
 {
 	struct device_node *parent = pdev->dev.of_node;
 	struct device_node *port;
-	int r, ret = 0;
+	int r;
 
 	if (parent == NULL)
 		return 0;
@@ -974,21 +972,17 @@ static int dss_init_ports(struct platform_device *pdev)
 
 		switch (port_type) {
 		case OMAP_DISPLAY_TYPE_DPI:
-			ret = dpi_init_port(pdev, port);
+			dpi_init_port(pdev, port);
 			break;
 		case OMAP_DISPLAY_TYPE_SDI:
-			ret = sdi_init_port(pdev, port);
+			sdi_init_port(pdev, port);
 			break;
 		default:
 			break;
 		}
-	} while (!ret &&
-		 (port = omapdss_of_get_next_port(parent, port)) != NULL);
+	} while ((port = omapdss_of_get_next_port(parent, port)) != NULL);
 
-	if (ret)
-		dss_uninit_ports(pdev);
-
-	return ret;
+	return 0;
 }
 
 static void dss_uninit_ports(struct platform_device *pdev)

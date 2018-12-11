@@ -16,8 +16,34 @@
 #include <asm/cacheflush.h>
 #include <asm/ftrace.h>
 #include <asm/insn.h>
+#include <asm/sections.h>
 
 #ifdef CONFIG_DYNAMIC_FTRACE
+
+#ifdef CONFIG_DEBUG_RODATA
+#include "../mm/mm.h"
+#endif
+
+int ftrace_arch_code_modify_prepare(void)
+{
+#ifdef CONFIG_DEBUG_RODATA
+	create_mapping_late(__pa(_stext), (unsigned long)_stext,
+				__pa(_etext) - __pa(_stext),
+				PAGE_KERNEL_EXEC);
+#endif
+	return 0;
+}
+
+int ftrace_arch_code_modify_post_process(void)
+{
+#ifdef CONFIG_DEBUG_RODATA
+	create_mapping_late(__pa(_stext), (unsigned long)_stext,
+				__pa(_etext) - __pa(_stext),
+				PAGE_KERNEL_EXEC  | PTE_RDONLY);
+#endif
+	return 0;
+}
+
 /*
  * Replace a single instruction, which may be a branch or NOP.
  * If @validate == true, a replaced instruction is checked against 'old'.

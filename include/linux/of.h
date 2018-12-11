@@ -280,6 +280,7 @@ extern struct device_node *of_get_child_by_name(const struct device_node *node,
 
 /* cache lookup */
 extern struct device_node *of_find_next_cache_node(const struct device_node *);
+extern int of_find_last_cache_level(unsigned int cpu);
 extern struct device_node *of_find_node_with_property(
 	struct device_node *from, const char *prop_name);
 
@@ -520,6 +521,8 @@ const __be32 *of_prop_next_u32(struct property *prop, const __be32 *cur,
 const char *of_prop_next_string(struct property *prop, const char *cur);
 
 bool of_console_check(struct device_node *dn, char *name, int index);
+
+extern int of_cpu_node_to_id(struct device_node *np);
 
 #else /* CONFIG_OF */
 
@@ -835,6 +838,11 @@ static inline void of_property_set_flag(struct property *p, unsigned long flag)
 
 static inline void of_property_clear_flag(struct property *p, unsigned long flag)
 {
+}
+
+static inline int of_cpu_node_to_id(struct device_node *np)
+{
+	return -ENODEV;
 }
 
 #define of_match_ptr(_ptr)	NULL

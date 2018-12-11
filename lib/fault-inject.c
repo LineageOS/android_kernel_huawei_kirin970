@@ -31,8 +31,8 @@ int setup_fault_attr(struct fault_attr *attr, char *str)
 
 	attr->probability = probability;
 	attr->interval = interval;
-	atomic_set(&attr->times, times);
-	atomic_set(&attr->space, space);
+	atomic_set(&attr->times, times); /*lint !e1058*/
+	atomic_set(&attr->space, space); /*lint !e1058*/
 
 	return 1;
 }
@@ -209,10 +209,10 @@ struct dentry *fault_create_debugfs_attr(const char *name,
 	if (!debugfs_create_ul("verbose", mode, dir, &attr->verbose))
 		goto fail;
 	if (!debugfs_create_u32("verbose_ratelimit_interval_ms", mode, dir,
-				&attr->ratelimit_state.interval))
+				&attr->ratelimit_state.interval)) /*lint !e64*/
 		goto fail;
 	if (!debugfs_create_u32("verbose_ratelimit_burst", mode, dir,
-				&attr->ratelimit_state.burst))
+				&attr->ratelimit_state.burst)) /*lint !e64*/
 		goto fail;
 	if (!debugfs_create_bool("task-filter", mode, dir, &attr->task_filter))
 		goto fail;

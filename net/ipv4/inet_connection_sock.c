@@ -26,6 +26,14 @@
 #include <net/tcp.h>
 #include <net/sock_reuseport.h>
 
+#ifdef CONFIG_HW_QTAGUID_PID
+#include <huawei_platform/net/qtaguid_pid/qtaguid_pid.h>
+#endif
+
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
 #ifdef INET_CSK_DEBUG
 const char inet_csk_timer_bug_msg[] = "inet_csk BUG: unknown timer value\n";
 EXPORT_SYMBOL(inet_csk_timer_bug_msg);
@@ -111,6 +119,15 @@ have_port:
 		head = &hinfo->bhash[inet_bhashfn(net, port,
 						  hinfo->bhash_size)];
 		spin_lock_bh(&head->lock);
+
+		if (inet_is_local_reserved_port(net, port) &&
+			!sysctl_local_reserved_ports_bind_ctrl &&
+			(!sysctl_local_reserved_ports_bind_pid ||
+			 sysctl_local_reserved_ports_bind_pid != current->tgid)) {
+			ret = 1;
+			goto fail_unlock;
+		}
+
 		inet_bind_bucket_for_each(tb, &head->chain)
 			if (net_eq(ib_net(tb), net) && tb->port == port)
 				goto tb_found;
@@ -700,6 +717,18 @@ void inet_csk_destroy_sock(struct sock *sk)
 	/* If it has not 0 inet_sk(sk)->inet_num, it must be bound */
 	WARN_ON(inet_sk(sk)->inet_num && !inet_csk(sk)->icsk_bind_hash);
 
+#ifdef CONFIG_HW_QTAGUID_PID
+        qtaguid_pid_remove(sk);
+#endif
+
+#ifdef CONFIG_TCP_ARGO
+	argo_deinit(sk);
+#endif /* CONFIG_TCP_ARGO */
+
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	if (atomic_read(&sk->sk_refcnt) == 1)
+		tcp_measure_deinit(sk);
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 	sk->sk_prot->destroy(sk);
 
 	sk_stream_kill_queues(sk);

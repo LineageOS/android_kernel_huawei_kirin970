@@ -13,6 +13,10 @@ ifneq ($(CONFIG_ARCH_INIT_TASK),y)
 obj-y                          += init_task.o
 endif
 
+ifeq ($(TARGET_BUILD_VARIANT),eng)
+EXTRA_CFLAGS += -DCMDLINE_INFO_FILTER
+endif
+
 mounts-y			:= do_mounts.o
 mounts-$(CONFIG_BLK_DEV_RAM)	+= do_mounts_rd.o
 mounts-$(CONFIG_BLK_DEV_INITRD)	+= do_mounts_initrd.o
@@ -31,6 +35,4 @@ $(obj)/version.o: include/generated/compile.h
  quiet_chk_compile.h = echo '  CHK     $@'
 silent_chk_compile.h = :
 include/generated/compile.h: FORCE
-	@$($(quiet)chk_compile.h)
-	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/mkcompile_h $@ \
-	"$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)" "$(CC) $(KBUILD_CFLAGS)"
+	@$($(quiet)chk_compile.h); $(CONFIG_SHELL) $(srctree)/scripts/mkcompile_h $@ "$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)" "$(CC) $(KBUILD_CFLAGS)"

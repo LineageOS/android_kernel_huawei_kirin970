@@ -50,6 +50,15 @@ config MMC_BLOCK_BOUNCE
 
 	  If unsure, say Y here.
 
+config MMC_BLOCK_DEFERRED_RESUME
+	bool "Deferr MMC layer resume until I/O is requested"
+	depends on MMC_BLOCK
+	default n
+	help
+	  Say Y here to enable deferred MMC resume until I/O
+	  is requested. This will reduce overall resume latency and
+	  save power when theres an SD card inserted but not being used.
+
 config SDIO_UART
 	tristate "SDIO UART/GPS class support"
 	depends on TTY
@@ -80,3 +89,56 @@ config MMC_SIMULATE_MAX_SPEED
 	  control the write or read maximum KB/second speed behaviors.
 
 	  If unsure, say N here.
+config MMC_FFU
+	bool "FFU SUPPORT"
+	depends on MMC != n
+	help
+	  This is an option to run firmware update on eMMC 5.0.
+	  Field firmware updates (FFU) enables features enhancment
+	  in the field.
+
+config MMC_FFU_SAMSUNG45
+	bool "FFU SUPPORT for Samsung eMMC 4.5."
+	depends on MMC_FFU
+	default n
+	help
+	  This is an option to run firmware update on Samsung eMMC 4.5.
+	  Field firmware updates (FFU) enables features enhancment
+	  in the field.
+config HW_SD_HEALTH_DETECT
+	bool "SD HEALTH DIAG SUPPORT"
+	default y
+	help
+	  This is an option to diag sd health status.
+config HW_MMC_TEST
+	bool "MMC host test driver by Huawei"
+	default n
+	help
+	  it's used as a pre-compile macro for mmc test driver by huawei.
+
+config HW_MMC_TEST_MODULE
+	tristate "MMC host test driver by Huawei"
+	depends on HW_MMC_TEST
+	default n
+	help
+	  Development driver that performs a series of reads and writes
+	  to a memory card in order to expose certain well known bugs
+	  in host controllers. The tests are executed by writing to the
+	  "test" file in debugfs under each card. Note that whatever is
+	  on your card will be overwritten by these tests.
+
+	  This driver is only of interest to those developing or
+	  testing a host driver. Most people should say N here.
+
+config HW_SYSTEM_HW_WR_PROTECT
+	bool "emmc hardware write protection function of system/cust partitions."
+	depends on HW_SYSTEM_WR_PROTECT
+	default n
+
+config SD_SCHEDULER_CFQ_ONLY
+	tristate "SD use cfq when io scheduler is row"
+	depends on MMC_BLOCK
+	default n
+	help
+	  This is an option to change sd io scheduler to cfq when
+	  block io scheduler is row.

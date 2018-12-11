@@ -86,6 +86,7 @@ config ARM64
 	select HAVE_GENERIC_DMA_COHERENT
 	select HAVE_HW_BREAKPOINT if PERF_EVENTS
 	select HAVE_IRQ_TIME_ACCOUNTING
+	select HAVE_HW_BREAKPOINT_ADDR_MASK
 	select HAVE_MEMBLOCK
 	select HAVE_MEMBLOCK_NODE_MAP if NUMA
 	select HAVE_PATA_PLATFORM
@@ -110,6 +111,7 @@ config ARM64
 	select POWER_SUPPLY
 	select SPARSE_IRQ
 	select SYSCTL_EXCEPTION_TRACE
+	select HAVE_LIVEPATCH
 	select THREAD_INFO_IN_TASK
 	help
 	  ARM 64-bit (AArch64) Linux support.
@@ -243,6 +245,8 @@ config PGTABLE_LEVELS
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
+
+source "kernel/livepatch/Kconfig"
 
 source "arch/arm64/Kconfig.platforms"
 
@@ -429,6 +433,20 @@ config ARM64_ERRATUM_843419
 
 	  If unsure, say Y.
 
+config ARM64_ERRATUM_1024718
+	bool "Cortex-A55: 1024718: Update of DBM/AP bits without break before make might result in incorrect update"
+	default y
+	help
+	  This option adds work around for Arm Cortex-A55 Erratum 1024718.
+
+	  Affected Cortex-A55 cores (r0p0, r0p1, r1p0) could cause incorrect
+	  update of the hardware dirty bit when the DBM/AP bits are updated
+	  without a break-before-make. The work around is to disable the usage
+	  of hardware DBM locally on the affected cores. CPUs not affected by
+	  erratum will continue to use the feature.
+
+	  If unsure, say Y.
+
 config CAVIUM_ERRATUM_22375
 	bool "Cavium erratum 22375, 24313"
 	default y
@@ -487,6 +505,23 @@ config QCOM_QDF2400_ERRATUM_0065
 	  If unsure, say Y.
 
 endmenu
+
+config ARM64_ERRATUM_858921
+	bool "Cortex-A73 858921: Possible wrong read value for CNTVCT or CNTPCT value"
+	default y
+	depends on ARM_ARCH_TIMER && ARM64
+	help
+	  This option enables a workaround for Cortex-A73 Category B
+	  858921 ("Possible wrong read value for CNTVCT or CNTPCT
+	  value").
+
+	  CNTVCT and CNTPCT are updated according to the counter value given by
+	  CNTVALUEB input bus. If CNTVCT and CNTPCT are read while they are updated
+	  with the lower 32 bits rolled-over, it is possible to read a wrong transient
+	  value CNTVCT or CNTPCT respectively.
+
+	  The workaround is to read the CNTVCT or CNTPCT twice. If the bit 32 of the 2
+	  values is not same, use the first value otherwise use the second one.
 
 
 choice
@@ -630,6 +665,9 @@ config ARCH_SUPPORTS_DEBUG_PAGEALLOC
 config ARCH_HAS_HOLES_MEMORYMODEL
 	def_bool y if SPARSEMEM
 
+config ARCH_FLATMEM_ENABLE
+	def_bool y
+
 config ARCH_SPARSEMEM_ENABLE
 	def_bool y
 	select SPARSEMEM_VMEMMAP_ENABLE
@@ -646,6 +684,11 @@ config HAVE_ARCH_PFN_VALID
 config HW_PERF_EVENTS
 	def_bool y
 	depends on ARM_PMU
+
+config HISI_HW_PERF_EVENTS
+	bool "HISI perf PMU event debug"
+	depends on HW_PERF_EVENTS
+	default n
 
 config SYS_SUPPORTS_HUGETLBFS
 	def_bool y
@@ -761,6 +804,22 @@ config HARDEN_BRANCH_PREDICTOR
 	  branch predictor against aliasing attacks and may rely on specific
 	  instruction sequences or control bits being set by the system
 	  firmware.
+
+	  If unsure, say Y.
+
+config HISI_HARDEN_BRANCH_PREDICTOR
+	bool "Hisilicon Harden the branch predictor solution" if EXPERT
+	default n
+	depends on HARDEN_BRANCH_PREDICTOR
+	help
+	  Hisilicon optimizations for harden branch predictor schema.
+
+config ARM64_SSBD
+	bool "Speculative Store Bypass Disable" if EXPERT
+	default y
+	help
+	  This enables mitigation of the bypassing of previous stores
+	  by speculative loads.
 
 	  If unsure, say Y.
 

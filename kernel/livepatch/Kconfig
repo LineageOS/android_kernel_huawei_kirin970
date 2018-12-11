@@ -3,11 +3,14 @@ config HAVE_LIVEPATCH
 	help
 	  Arch supports kernel live patching
 
+if HAVE_LIVEPATCH
+menu "Enable Livepatch"
+
 config LIVEPATCH
 	bool "Kernel Live Patching"
-	depends on DYNAMIC_FTRACE_WITH_REGS
 	depends on MODULES
 	depends on SYSFS
+
 	depends on KALLSYMS_ALL
 	depends on HAVE_LIVEPATCH
 	help
@@ -16,3 +19,13 @@ config LIVEPATCH
 	  module uses the interface provided by this option to register
 	  a patch, causing calls to patched functions to be redirected
 	  to new function code contained in the patch module.
+
+config LIVEPATCH_STACK
+	bool "Enforcing the patch stacking principle"
+	depends on LIVEPATCH
+	default y
+	help
+	  Say N here if you want to remove the patch stacking principle.
+
+endmenu
+endif

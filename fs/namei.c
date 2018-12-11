@@ -38,6 +38,7 @@
 #include <linux/bitops.h>
 #include <linux/init_task.h>
 #include <asm/uaccess.h>
+#include <linux/hisi/hisi_hkip.h>
 
 #include "internal.h"
 #include "mount.h"
@@ -51,8 +52,8 @@
  * The new code replaces the old recursive symlink resolution with
  * an iterative one (in case of non-nested symlink chains).  It does
  * this with calls to <fs>_follow_link().
- * As a side effect, dir_namei(), _namei() and follow_link() are now 
- * replaced with a single function lookup_dentry() that can handle all 
+ * As a side effect, dir_namei(), _namei() and follow_link() are now
+ * replaced with a single function lookup_dentry() that can handle all
  * the special cases of the former code.
  *
  * With the new dcache, the pathname is stored at each inode, at least as
@@ -292,6 +293,14 @@ static int check_acl(struct inode *inode, int mask)
 static int acl_permission_check(struct inode *inode, int mask)
 {
 	unsigned int mode = inode->i_mode;
+
+	if (uid_eq(inode->i_uid, GLOBAL_ROOT_UID) &&
+		unlikely(hkip_check_uid_root()))
+		return -EACCES;
+
+	if (gid_eq(inode->i_gid, GLOBAL_ROOT_GID) &&
+		unlikely(hkip_check_gid_root()))
+		return -EACCES;
 
 	if (likely(uid_eq(current_fsuid(), inode->i_uid)))
 		mode >>= 6;

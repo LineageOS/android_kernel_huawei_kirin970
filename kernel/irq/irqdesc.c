@@ -19,6 +19,10 @@
 
 #include "internals.h"
 
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/rdr_hisi_ap_hook.h>
+#include <linux/hisi/rdr_hisi_platform.h>
+#endif
 /*
  * lockdep: we want to handle all irq_desc locks as a single lock-class:
  */
@@ -610,6 +614,10 @@ int __handle_domain_irq(struct irq_domain *domain, unsigned int hwirq,
 	int ret = 0;
 
 	irq_enter();
+#ifdef CONFIG_HISI_BB
+	irq_trace_hook(0, 0, hwirq);
+	irq_register_hook(old_regs);
+#endif
 
 #ifdef CONFIG_IRQ_DOMAIN
 	if (lookup)
@@ -626,7 +634,9 @@ int __handle_domain_irq(struct irq_domain *domain, unsigned int hwirq,
 	} else {
 		generic_handle_irq(irq);
 	}
-
+#ifdef CONFIG_HISI_BB
+	irq_trace_hook(1, 0, hwirq);
+#endif
 	irq_exit();
 	set_irq_regs(old_regs);
 	return ret;

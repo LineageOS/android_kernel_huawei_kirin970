@@ -276,12 +276,33 @@ int clk_enable(struct clk *clk);
  */
 void clk_disable(struct clk *clk);
 
+#ifdef CONFIG_HISI_CLK
+int clk_remote_prepare_enable(struct clk *clk);
+void clk_remote_disable_unprepare(struct clk *clk);
+#ifdef CONFIG_HISI_CLK_PM_MONITOR
+void pmclk_monitor_enable(void);
+#else
+static inline void pmclk_monitor_enable(void)
+{
+	return;
+}
+#endif
+#endif
+
 /**
  * clk_get_rate - obtain the current clock rate (in Hz) for a clock source.
  *		  This is only valid once the clock source has been enabled.
  * @clk: clock source
  */
 unsigned long clk_get_rate(struct clk *clk);
+
+#ifdef CONFIG_HISI_CLK
+/**
+ * clk_get_enable_count - obtain the current clk->enable_count.
+ * @clk: clock source
+ */
+unsigned int clk_get_enable_count(struct clk *clk);
+#endif
 
 /**
  * clk_put	- "free" the clock source

@@ -122,6 +122,36 @@ int xhci_halt(struct xhci_hcd *xhci)
 	return ret;
 }
 
+static void warm_reset(struct usb_hcd *hcd)
+{
+	int max_ports;
+	__le32 __iomem **port_array;
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	u32 temp;
+	int i;
+
+	if (hcd->speed >= HCD_USB3) {
+		max_ports = xhci->num_usb3_ports;
+		port_array = xhci->usb3_ports;
+	} else {
+		return;
+	}
+
+	for (i = 0; i < max_ports; i++) {
+		xhci_info(xhci, "%s port %d\n", __func__, i);
+		temp = readl(port_array[i]);
+		if (temp == 0xffffffff) {
+			continue;
+		}
+
+		temp = xhci_port_state_to_neutral(temp);
+
+		temp |= PORT_WR; /*lint !e648 */
+		writel(temp, port_array[i]);
+	}
+}
+
+
 /*
  * Set the run bit and wait for the host to be running.
  */
@@ -149,6 +179,12 @@ static int xhci_start(struct xhci_hcd *xhci)
 	if (!ret)
 		/* clear state flags. Including dying, halted or removing */
 		xhci->xhc_state = 0;
+
+	if (xhci->quirks & XHCI_WARM_RESET_AFTER_INIT) {
+		if (xhci->shared_hcd && xhci->shared_hcd->speed >= HCD_USB3) {
+			warm_reset(xhci->shared_hcd);
+		}
+	}
 
 	return ret;
 }
@@ -686,6 +722,15 @@ void xhci_stop(struct usb_hcd *hcd)
 
 	mutex_lock(&xhci->mutex);
 
+	if (!usb_hcd_is_primary_hcd(hcd)) {
+		spin_lock_irq(&xhci->lock);
+		xhci->shared_hcd = NULL;
+		spin_unlock_irq(&xhci->lock);
+
+		mutex_unlock(&xhci->mutex);
+		return;
+	}
+
 	if (!(xhci->xhc_state & XHCI_STATE_HALTED)) {
 		spin_lock_irq(&xhci->lock);
 
@@ -695,11 +740,6 @@ void xhci_stop(struct usb_hcd *hcd)
 		xhci_reset(xhci);
 
 		spin_unlock_irq(&xhci->lock);
-	}
-
-	if (!usb_hcd_is_primary_hcd(hcd)) {
-		mutex_unlock(&xhci->mutex);
-		return;
 	}
 
 	xhci_cleanup_msix(xhci);
@@ -1179,7 +1219,7 @@ unsigned int xhci_get_endpoint_address(unsigned int ep_index)
  */
 unsigned int xhci_get_endpoint_flag(struct usb_endpoint_descriptor *desc)
 {
-	return 1 << (xhci_get_endpoint_index(desc) + 1);
+	return 1 << (xhci_get_endpoint_index(desc) + 1); /*[false alarm]: it is a false alarm*/
 }
 
 /* Find the flag for this endpoint (for use in the control context).  Use the
@@ -1188,7 +1228,7 @@ unsigned int xhci_get_endpoint_flag(struct usb_endpoint_descriptor *desc)
  */
 unsigned int xhci_get_endpoint_flag_from_index(unsigned int ep_index)
 {
-	return 1 << (ep_index + 1);
+	return 1 << (ep_index + 1); /*[false alarm]: it is a false alarm*/
 }
 
 /* Compute the last valid endpoint context index.  Basically, this is the
@@ -1199,7 +1239,7 @@ unsigned int xhci_get_endpoint_flag_from_index(unsigned int ep_index)
  */
 unsigned int xhci_last_valid_endpoint(u32 added_ctxs)
 {
-	return fls(added_ctxs) - 1;
+	return fls(added_ctxs) - 1; /*[false alarm]: it is a false alarm*/
 }
 
 /* Returns 1 if the arguments are OK;
@@ -1507,18 +1547,41 @@ int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	struct xhci_ring *ep_ring;
 	struct xhci_virt_ep *ep;
 	struct xhci_command *command;
+	struct xhci_virt_device *vdev;
 
 	xhci = hcd_to_xhci(hcd);
 	spin_lock_irqsave(&xhci->lock, flags);
 	/* Make sure the URB hasn't completed or been unlinked already */
 	ret = usb_hcd_check_unlink_urb(hcd, urb, status);
-	if (ret || !urb->hcpriv)
+	if (ret)
 		goto done;
+
+	/* give back URB now if we can't queue it for cancel */
+	vdev = xhci->devs[urb->dev->slot_id];
+	urb_priv = urb->hcpriv;
+	if (!vdev || !urb_priv) {
+		xhci_err(xhci, "%s:vdev or urb_priv is NULL\n", __func__);
+		goto err_giveback;
+	}
+
+	ep_index = xhci_get_endpoint_index(&urb->ep->desc);
+	ep = &vdev->eps[ep_index];
+	if (!ep) {
+		xhci_err(xhci, "%s:ep is NULL, ep_index %d\n", __func__, ep_index);
+		goto err_giveback;
+	}
+
+	ep_ring = xhci_urb_to_transfer_ring(xhci, urb);
+	if (!ep_ring) {
+		xhci_err(xhci, "%s:ep_ring is NULL, ep_index %d\n", __func__, ep_index);
+		goto err_giveback;
+	}
+
+	/* If xHC is dead take it down and return ALL URBs in xhci_hc_died() */
 	temp = readl(&xhci->op_regs->status);
 	if (temp == 0xffffffff || (xhci->xhc_state & XHCI_STATE_HALTED)) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 				"HW died, freeing TD.");
-		urb_priv = urb->hcpriv;
 		for (i = urb_priv->td_cnt;
 		     i < urb_priv->length && xhci->devs[urb->dev->slot_id];
 		     i++) {
@@ -1528,23 +1591,9 @@ int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 			if (!list_empty(&td->cancelled_td_list))
 				list_del_init(&td->cancelled_td_list);
 		}
-
-		usb_hcd_unlink_urb_from_ep(hcd, urb);
-		spin_unlock_irqrestore(&xhci->lock, flags);
-		usb_hcd_giveback_urb(hcd, urb, -ESHUTDOWN);
-		xhci_urb_free_priv(urb_priv);
-		return ret;
+		goto err_giveback;
 	}
 
-	ep_index = xhci_get_endpoint_index(&urb->ep->desc);
-	ep = &xhci->devs[urb->dev->slot_id]->eps[ep_index];
-	ep_ring = xhci_urb_to_transfer_ring(xhci, urb);
-	if (!ep_ring) {
-		ret = -EINVAL;
-		goto done;
-	}
-
-	urb_priv = urb->hcpriv;
 	i = urb_priv->td_cnt;
 	if (i < urb_priv->length)
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
@@ -1581,6 +1630,14 @@ int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	}
 done:
 	spin_unlock_irqrestore(&xhci->lock, flags);
+	return ret;
+
+err_giveback:
+	if (urb_priv)
+		xhci_urb_free_priv(urb_priv);
+	usb_hcd_unlink_urb_from_ep(hcd, urb);
+	spin_unlock_irqrestore(&xhci->lock, flags);
+	usb_hcd_giveback_urb(hcd, urb, -ESHUTDOWN);
 	return ret;
 }
 
@@ -2609,6 +2666,7 @@ static int xhci_configure_endpoint(struct xhci_hcd *xhci,
 		bool ctx_change, bool must_succeed)
 {
 	int ret;
+	int timeleft;
 	unsigned long flags;
 	struct xhci_input_control_ctx *ctrl_ctx;
 	struct xhci_virt_device *virt_dev;
@@ -2664,7 +2722,13 @@ static int xhci_configure_endpoint(struct xhci_hcd *xhci,
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
 	/* Wait for the configure endpoint command to complete */
-	wait_for_completion(command->completion);
+	timeleft = wait_for_completion_timeout(command->completion, XHCI_CMD_DEFAULT_TIMEOUT * 2);
+	if (timeleft <= 0) {
+		xhci_warn(xhci, "%s while waiting for configure endpoint command\n",
+				timeleft == 0 ? "Timeout" : "Signal");
+		return -EIO;
+	}
+
 
 	if (!ctx_change)
 		ret = xhci_configure_endpoint_result(xhci, udev,
@@ -3424,6 +3488,7 @@ int xhci_discover_or_reset_device(struct usb_hcd *hcd, struct usb_device *udev)
 	int last_freed_endpoint;
 	struct xhci_slot_ctx *slot_ctx;
 	int old_active_eps = 0;
+	int timeleft;
 
 	ret = xhci_check_args(hcd, udev, NULL, 0, false, __func__);
 	if (ret <= 0)
@@ -3491,7 +3556,13 @@ int xhci_discover_or_reset_device(struct usb_hcd *hcd, struct usb_device *udev)
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
 	/* Wait for the Reset Device command to finish */
-	wait_for_completion(reset_device_cmd->completion);
+	timeleft = wait_for_completion_timeout(reset_device_cmd->completion, XHCI_CMD_DEFAULT_TIMEOUT * 2);
+	if (timeleft <= 0) {
+		xhci_warn(xhci, "%s while waiting for reset device\n",
+				timeleft == 0 ? "Timeout" : "Signal");
+		ret = -EIO;
+		goto command_cleanup;
+	}
 
 	/* The Reset Device command can't fail, according to the 0.95/0.96 spec,
 	 * unless we tried to reset a slot ID that wasn't enabled,
@@ -3674,6 +3745,7 @@ int xhci_alloc_dev(struct usb_hcd *hcd, struct usb_device *udev)
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 	unsigned long flags;
 	int ret, slot_id;
+	int timeleft;
 	struct xhci_command *command;
 
 	command = xhci_alloc_command(xhci, false, false, GFP_KERNEL);
@@ -3695,7 +3767,15 @@ int xhci_alloc_dev(struct usb_hcd *hcd, struct usb_device *udev)
 	xhci_ring_cmd_db(xhci);
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
-	wait_for_completion(command->completion);
+	timeleft = wait_for_completion_timeout(command->completion, XHCI_CMD_DEFAULT_TIMEOUT * 2);
+	if (timeleft <= 0) {
+		xhci_warn(xhci, "%s while waiting for alloc dev\n",
+				timeleft == 0 ? "Timeout" : "Signal");
+		mutex_unlock(&xhci->mutex);
+		kfree(command);
+		return 0;
+	}
+
 	slot_id = xhci->slot_id;
 	mutex_unlock(&xhci->mutex);
 
@@ -3768,6 +3848,7 @@ static int xhci_setup_device(struct usb_hcd *hcd, struct usb_device *udev,
 	unsigned long flags;
 	struct xhci_virt_device *virt_dev;
 	int ret = 0;
+	int timeleft;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 	struct xhci_slot_ctx *slot_ctx;
 	struct xhci_input_control_ctx *ctrl_ctx;
@@ -3859,7 +3940,13 @@ static int xhci_setup_device(struct usb_hcd *hcd, struct usb_device *udev,
 	spin_unlock_irqrestore(&xhci->lock, flags);
 
 	/* ctrl tx can take up to 5 sec; XXX: need more time for xHC? */
-	wait_for_completion(command->completion);
+	timeleft = wait_for_completion_timeout(command->completion, XHCI_CMD_DEFAULT_TIMEOUT * 2);
+	if (timeleft <= 0) {
+		xhci_warn(xhci, "%s while waiting for setup device\n",
+				timeleft == 0 ? "Timeout" : "Signal");
+		ret = -EIO;
+		goto out;
+	}
 
 	/* FIXME: From section 4.3.4: "Software shall be responsible for timing
 	 * the SetAddress() "recovery interval" required by USB and aborting the
@@ -4888,6 +4975,11 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 
 	get_quirks(dev, xhci);
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if (xhci->quirks & XHCI_NOT_SUP_SG)
+		hcd->self.sg_tablesize = 0;
+#endif
+
 	/* In xhci controllers which follow xhci 1.0 spec gives a spurious
 	 * success event after a short transfer. This quirk will ignore such
 	 * spurious event.
@@ -4921,9 +5013,17 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 	 * if xHC supports 64-bit addressing */
 	if (HCC_64BIT_ADDR(xhci->hcc_params) &&
 			!dma_set_mask(dev, DMA_BIT_MASK(64))) {
-		xhci_dbg(xhci, "Enabling 64-bit DMA addresses.\n");
+		xhci_info(xhci, "Enabling 64-bit DMA addresses.\n");
 		dma_set_coherent_mask(dev, DMA_BIT_MASK(64));
-	} else {
+	}
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	else if ((xhci->quirks & XHCI_HCD_LOCAL_MEM) &&
+			!dma_set_mask(dev, DMA_BIT_MASK(64))) {/*lint !e598 !e648 */
+		xhci_info(xhci, "XHCI_HCD_LOCAL_MEM use 64-bit DMA addresses.\n");
+		dma_set_coherent_mask(dev, DMA_BIT_MASK(64));/*lint !e598 !e648 */
+	}
+#endif
+	else {
 		/*
 		 * This is to avoid error in cases where a 32-bit USB
 		 * controller is used on a 64-bit capable system.
@@ -4931,7 +5031,7 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 		retval = dma_set_mask(dev, DMA_BIT_MASK(32));
 		if (retval)
 			return retval;
-		xhci_dbg(xhci, "Enabling 32-bit DMA addresses.\n");
+		xhci_info(xhci, "Enabling 32-bit DMA addresses.\n");
 		dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
 	}
 
@@ -4942,7 +5042,7 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 		return retval;
 	xhci_dbg(xhci, "Called HCD init\n");
 
-	xhci_info(xhci, "hcc params 0x%08x hci version 0x%x quirks 0x%08x\n",
+	xhci_info(xhci, "hcc params 0x%08x hci version 0x%x quirks 0x%016llx\n",
 		  xhci->hcc_params, xhci->hci_version, xhci->quirks);
 
 	return 0;
@@ -4958,7 +5058,7 @@ static const struct hc_driver xhci_hc_driver = {
 	 * generic hardware linkage
 	 */
 	.irq =			xhci_irq,
-	.flags =		HCD_MEMORY | HCD_USB3 | HCD_SHARED,
+	.flags =		HCD_MEMORY | HCD_USB31 | HCD_SHARED,
 
 	/*
 	 * basic lifecycle operations

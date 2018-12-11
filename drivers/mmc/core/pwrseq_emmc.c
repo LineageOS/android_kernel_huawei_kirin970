@@ -63,14 +63,17 @@ static int mmc_pwrseq_emmc_probe(struct platform_device *pdev)
 {
 	struct mmc_pwrseq_emmc *pwrseq;
 	struct device *dev = &pdev->dev;
+	int ret = 0;
 
 	pwrseq = devm_kzalloc(dev, sizeof(*pwrseq), GFP_KERNEL);
 	if (!pwrseq)
 		return -ENOMEM;
 
 	pwrseq->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(pwrseq->reset_gpio))
-		return PTR_ERR(pwrseq->reset_gpio);
+	if (IS_ERR(pwrseq->reset_gpio)){
+		ret = PTR_ERR(pwrseq->reset_gpio);
+		goto free;
+	}
 
 	/*
 	 * register reset handler to ensure emmc reset also from
@@ -86,7 +89,10 @@ static int mmc_pwrseq_emmc_probe(struct platform_device *pdev)
 	pwrseq->pwrseq.owner = THIS_MODULE;
 	platform_set_drvdata(pdev, pwrseq);
 
-	return mmc_pwrseq_register(&pwrseq->pwrseq);
+	return mmc_pwrseq_register(&pwrseq->pwrseq);/*lint !e429*/
+free:
+	devm_kfree(dev, pwrseq);
+	return ret;
 }
 
 static int mmc_pwrseq_emmc_remove(struct platform_device *pdev)

@@ -38,6 +38,12 @@
 #include <linux/magic.h>
 #include "ecryptfs_kernel.h"
 
+#ifdef CONFIG_ECRYPT_FS_FILTER
+#include <linux/ctype.h>
+#endif
+
+
+
 /**
  * Module parameter that defines the ecryptfs_verbosity level.
  */
@@ -175,6 +181,9 @@ enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig,
        ecryptfs_opt_fn_cipher, ecryptfs_opt_fn_cipher_key_bytes,
        ecryptfs_opt_unlink_sigs, ecryptfs_opt_mount_auth_tok_only,
        ecryptfs_opt_check_dev_ruid,
+#ifdef CONFIG_ECRYPT_FS_FILTER
+        ecryptfs_opt_enable_filtering,
+#endif
        ecryptfs_opt_err };
 
 static const match_table_t tokens = {
@@ -192,6 +201,9 @@ static const match_table_t tokens = {
 	{ecryptfs_opt_unlink_sigs, "ecryptfs_unlink_sigs"},
 	{ecryptfs_opt_mount_auth_tok_only, "ecryptfs_mount_auth_tok_only"},
 	{ecryptfs_opt_check_dev_ruid, "ecryptfs_check_dev_ruid"},
+#ifdef CONFIG_ECRYPT_FS_FILTER
+        {ecryptfs_opt_enable_filtering, "ecryptfs_enable_filtering=%s"},
+#endif
 	{ecryptfs_opt_err, NULL}
 };
 
@@ -233,6 +245,74 @@ static void ecryptfs_init_mount_crypt_stat(
 	mount_crypt_stat->flags |= ECRYPTFS_MOUNT_CRYPT_STAT_INITIALIZED;
 }
 
+#ifdef CONFIG_ECRYPT_FS_FILTER
+static int parse_enc_folder_filter_parms(struct ecryptfs_mount_crypt_stat *mcs, char *str)
+{
+        char *token = NULL;
+        int count = 0;
+        if(NULL == mcs || NULL == str){
+                ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER bad param in parse_enc_file_filter_parms\n");
+                return -1;
+        }
+        if(strlen(str) == 0){
+                ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER parse_enc_file_filter_parms str length is 0\n");
+                return 0;
+        }
+        memset(mcs->enc_filter_folder_name,0,sizeof(mcs->enc_filter_folder_name));
+        while ((token = strsep(&str, "|")) != NULL) {
+                if (count >= ENC_FOLDER_FILTER_MAX_INSTANCE){
+                        ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER too many filter instances in parse_enc_file_filter_parms\n");
+                        memset(mcs->enc_filter_folder_name,0,sizeof(mcs->enc_filter_folder_name));
+                        return -1;
+                }
+                if(strlen(token) >= ENC_FOLDER_FILTER_MAX_LEN){
+                        ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER in parse_enc_file_filter_parms,token [%s] is over length\n",token);
+                        memset(mcs->enc_filter_folder_name,0,sizeof(mcs->enc_filter_folder_name));
+                        return -1;
+                }
+                else if(strlen(token) == 0){
+                        ecryptfs_printk(KERN_WARNING,"ENCRYPTSD_FILTER parse_enc_file_filter_parms || happened\n");
+                        continue;
+                }
+              else if(' ' == token[0] || ' ' == token[strlen(token -1)]){
+                    ecryptfs_printk(KERN_WARNING,"ENCRYPTSD_FILTER parse_enc_file_filter_parms space happened\n");
+                        continue;
+              }
+                else{
+                        strncpy(mcs->enc_filter_folder_name[count++],token, strlen(token));
+                }
+        }
+        return 0;
+}
+
+
+/**
+ * parse_enc_filter_parms
+ * @mcs: mount crypt stat
+ * @str: filter string
+ *
+ * parcels encrypt extent name and file name white list
+ *
+ * Returns zero on success; non-zero otherwise
+ */
+static int parse_enc_filter_parms(struct ecryptfs_mount_crypt_stat *mcs, char *str)
+{
+        int rc = -1;
+        if(NULL == mcs || NULL == str ){
+                ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER invalid param in parse_enc_filter_parms \n");
+                return -1;
+        }
+        if(strlen(str) == 0){
+                ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER str length is 0 \n");
+                return 0;
+        }
+        rc = parse_enc_folder_filter_parms(mcs, str);
+        if(rc){
+                ecryptfs_printk(KERN_ERR,"ENCRYPTSD_FILTER parse_enc_file_filter_parms err returned %d \n",rc);
+        }
+        return rc;
+}
+#endif
 /**
  * ecryptfs_parse_options
  * @sb: The ecryptfs super block
@@ -389,6 +469,19 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 		case ecryptfs_opt_check_dev_ruid:
 			*check_ruid = 1;
 			break;
+#ifdef CONFIG_ECRYPT_FS_FILTER
+                case ecryptfs_opt_enable_filtering:
+                        rc = parse_enc_filter_parms(mount_crypt_stat,
+                                                         args[0].from);
+                        if (rc) {
+                                printk(KERN_ERR "ENCRYPTSD_FILTER Error attempting to parse encryption "
+                                                        "filtering parameters.\n");
+                                rc = -EINVAL;
+                                goto out;
+                        }
+                        mount_crypt_stat->flags |= ECRYPTFS_ENABLE_FILTERING;
+                        break;
+#endif
 		case ecryptfs_opt_err:
 		default:
 			printk(KERN_WARNING

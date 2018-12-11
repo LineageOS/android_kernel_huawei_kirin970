@@ -89,9 +89,7 @@ static int horus3a_write_regs(struct horus3a_priv *priv,
 
 static int horus3a_write_reg(struct horus3a_priv *priv, u8 reg, u8 val)
 {
-	u8 tmp = val; /* see gcc.gnu.org/bugzilla/show_bug.cgi?id=81715 */
-
-	return horus3a_write_regs(priv, reg, &tmp, 1);
+	return horus3a_write_regs(priv, reg, &val, 1);
 }
 
 static int horus3a_enter_power_save(struct horus3a_priv *priv)

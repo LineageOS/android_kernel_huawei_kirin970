@@ -372,5 +372,5 @@ struct ethtool_ops {
 				      struct ethtool_link_ksettings *);
 	int	(*set_link_ksettings)(struct net_device *,
 				      const struct ethtool_link_ksettings *);
-};
+}__no_randomize_layout;
 #endif /* _LINUX_ETHTOOL_H */

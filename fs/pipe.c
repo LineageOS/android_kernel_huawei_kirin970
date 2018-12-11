@@ -27,7 +27,9 @@
 #include <asm/ioctls.h>
 
 #include "internal.h"
-
+#ifdef CONFIG_HW_FDLEAK
+#include <chipset_common/hwfdleak/fdleak.h>
+#endif
 /*
  * The max size that a non-root user is allowed to grow the pipe. Can
  * be set by root in /proc/sys/fs/pipe-max-size
@@ -579,6 +581,9 @@ pipe_release(struct inode *inode, struct file *file)
 	__pipe_unlock(pipe);
 
 	put_pipe_info(inode, pipe);
+#ifdef CONFIG_HW_FDLEAK
+	fdleak_report(FDLEAK_WP_PIPE, 1);
+#endif
 	return 0;
 }
 
@@ -858,6 +863,9 @@ SYSCALL_DEFINE2(pipe2, int __user *, fildes, int, flags)
 		} else {
 			fd_install(fd[0], files[0]);
 			fd_install(fd[1], files[1]);
+#ifdef CONFIG_HW_FDLEAK
+			fdleak_report(FDLEAK_WP_PIPE, 0);
+#endif
 		}
 	}
 	return error;

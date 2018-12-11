@@ -24,6 +24,10 @@ void schedtune_exit_task(struct task_struct *tsk);
 void schedtune_enqueue_task(struct task_struct *p, int cpu);
 void schedtune_dequeue_task(struct task_struct *p, int cpu);
 
+#ifdef CONFIG_HISI_CPU_FREQ_GOV_SCHEDUTIL
+int schedtune_freq_boost(int cpu);
+int schedtune_top_task(struct task_struct *tsk);
+#endif
 #else /* CONFIG_CGROUP_SCHEDTUNE */
 
 #define schedtune_cpu_boost(cpu)  get_sysctl_sched_cfs_boost()
@@ -34,6 +38,14 @@ void schedtune_dequeue_task(struct task_struct *p, int cpu);
 #define schedtune_enqueue_task(task, cpu) do { } while (0)
 #define schedtune_dequeue_task(task, cpu) do { } while (0)
 
+#ifdef CONFIG_HISI_CPU_FREQ_GOV_SCHEDUTIL
+int schedtune_freq_boost(int cpu) {
+	return 0;
+}
+int schedtune_top_task(struct task_struct *tsk) {
+	return 0;
+}
+#endif
 #endif /* CONFIG_CGROUP_SCHEDTUNE */
 
 int schedtune_normalize_energy(int energy);
@@ -52,4 +64,9 @@ int schedtune_accept_deltas(int nrg_delta, int cap_delta,
 
 #define schedtune_accept_deltas(nrg_delta, cap_delta, task) nrg_delta
 
+#ifdef CONFIG_HISI_CPU_FREQ_GOV_SCHEDUTIL
+int schedtune_freq_boost(int cpu) {
+	return 0;
+}
+#endif
 #endif /* CONFIG_SCHED_TUNE */

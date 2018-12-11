@@ -550,4 +550,7 @@ config STACKDEPOT
 config SBITMAP
 	bool
 
+config WBT
+	bool "buffered writeback throttling"
+
 endmenu

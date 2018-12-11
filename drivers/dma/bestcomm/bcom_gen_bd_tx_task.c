@@ -43,7 +43,7 @@ u32 bcom_gen_bd_tx_task[] = {
 	0x60140002, /*     DRD2A: EU0=0 EU1=0 EU2=0 EU3=2 EXT init=0 WS=2 RS=2 */
 	0x0cccfcca, /*     DRD2B1: *idx3 = EU3(); EU3(*idx3,var10)  */
 	0xd9190300, /*   LCDEXT: idx2 = idx2; idx2 > var12; idx2 += inc0 */
-	0xb8c5e009, /*   LCD: idx3 = *(idx1 + var00000015); ; idx3 += inc1 */
+	0xb8c5e009,
 	0x03fec398, /*     DRD1A: *idx0 = *idx3; FN=0 init=31 WS=3 RS=3 */
 	0x9919826a, /*   LCD: idx2 = idx2, idx3 = idx3; idx2 > var9; idx2 += inc5, idx3 += inc2 */
 	0x0feac398, /*     DRD1A: *idx0 = *idx3; FN=0 TFD INT init=31 WS=1 RS=1 */

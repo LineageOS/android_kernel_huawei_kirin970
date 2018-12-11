@@ -2984,7 +2984,7 @@ static struct gdsc vfe1_gdsc = {
 	.cxcs = (unsigned int []){ 0x36ac },
 	.cxc_count = 1,
 	.pd = {
-		.name = "vfe1",
+		.name = "vfe0",
 	},
 	.parent = &camss_gdsc.pd,
 	.pwrsts = PWRSTS_OFF_ON,

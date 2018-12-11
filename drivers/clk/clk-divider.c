@@ -18,6 +18,10 @@
 #include <linux/string.h>
 #include <linux/log2.h>
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+#include "hisi-clk-debug.h"
+#endif
+
 /*
  * DOC: basic adjustable divider clock that cannot gate
  *
@@ -413,10 +417,28 @@ static int clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+static int hisi_divreg_check(struct clk_hw *hw)
+{
+	unsigned long rate;
+	struct clk *clk = hw->clk;
+	struct clk *pclk = clk_get_parent(clk);
+
+	rate = clk_divider_recalc_rate(hw, clk_get_rate(pclk));
+	if (rate == clk_get_rate(clk))
+		return 1;
+	else
+		return 0;
+}
+#endif
+
 const struct clk_ops clk_divider_ops = {
 	.recalc_rate = clk_divider_recalc_rate,
 	.round_rate = clk_divider_round_rate,
 	.set_rate = clk_divider_set_rate,
+#ifdef CONFIG_HISI_CLK_DEBUG
+	.check_divreg = hisi_divreg_check,
+#endif
 };
 EXPORT_SYMBOL_GPL(clk_divider_ops);
 
@@ -455,7 +477,7 @@ static struct clk_hw *_register_divider(struct device *dev, const char *name,
 	else
 		init.ops = &clk_divider_ops;
 	init.flags = flags | CLK_IS_BASIC;
-	init.parent_names = (parent_name ? &parent_name: NULL);
+	init.parent_names = (parent_name ? &parent_name : NULL);
 	init.num_parents = (parent_name ? 1 : 0);
 
 	/* struct clk_divider assignments */

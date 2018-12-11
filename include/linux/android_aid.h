@@ -24,5 +24,6 @@
 #define AID_NET_ADMIN    KGIDT_INIT(3005)
 #define AID_NET_BW_STATS KGIDT_INIT(3006)  /* read bandwidth statistics */
 #define AID_NET_BW_ACCT  KGIDT_INIT(3007)  /* change bandwidth statistics accounting */
+#define AID_VENDOR_NET_BIND_SERVICE KGIDT_INIT(5901)  /* bind to ports under 1024 */
 
 #endif

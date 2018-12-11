@@ -194,6 +194,12 @@ enum
 	VM_PANIC_ON_OOM=33,	/* panic at out-of-memory */
 	VM_VDSO_ENABLED=34,	/* map VDSO into new processes? */
 	VM_MIN_SLAB=35,		 /* Percent pages ignored by zone reclaim */
+#ifdef CONFIG_HISI_SCSI_UFS_DUMP
+	VM_UFS_DUMP=36,		 /* dump ufs scsi request */
+#endif
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+	VM_PAGECACHE_DUMP=37,	 /* dump pagecache debug information */
+#endif
 };
 
 
@@ -274,6 +280,9 @@ enum
 	NET_CORE_AEVENT_ETIME=20,
 	NET_CORE_AEVENT_RSEQTH=21,
 	NET_CORE_WARNINGS=22,
+#ifdef CONFIG_HUAWEI_BASTET
+	NET_CORE_FG_DSCP=31,    /*FG应用对应的dscp 值*/
+#endif
 };
 
 /* /proc/sys/net/ethernet */

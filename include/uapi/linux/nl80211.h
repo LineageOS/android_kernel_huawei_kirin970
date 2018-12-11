@@ -1068,7 +1068,21 @@ enum nl80211_commands {
 	NL80211_CMD_DEL_NAN_FUNCTION,
 	NL80211_CMD_CHANGE_NAN_CONFIG,
 	NL80211_CMD_NAN_MATCH,
-
+	/* because of disagreement with nl80211_copy.h in wpa_supplicant code,
+	this private command is defined as a larger number, you should
+	add new commands below in order to not conflict with this one */
+#ifdef CONFIG_HW_VOWIFI
+	NL80211_CMD_VOWIFI = 201,
+#endif
+#ifdef CONFIG_HW_ABS
+	NL80211_CMD_ANT = 202,
+#endif
+#if (defined (CONFIG_HW_WIFI_MSS) || defined (CONFIG_HW_WIFI_RSSI))
+	NL80211_CMD_VDR_COMMON = 203,
+#endif
+#ifdef CONFIG_HW_GET_P2P_TX_RATE
+        NL80211_CMD_GET_P2P_TX_RATE = 204,
+#endif /* CONFIG_HW_GET_P2P_TX_RATE */
 	/* add new commands above here */
 
 	/* used to define NL80211_CMD_MAX below */
@@ -2340,6 +2354,10 @@ enum nl80211_attrs {
 	NL80211_ATTR_NAN_MATCH,
 
 	NL80211_ATTR_BSSID,
+	/* because of disagreement with nl80211_copy.h in wpa_supplicant code,
+	this private attributes is defined as a larger number, you should
+	add new attributes below in order to not conflict with this one */
+	NL80211_ATTR_DFS_OFFLOAD_SUPPORT = 351,
 
 	/* add attributes here, update the policy in nl80211.c */
 
@@ -2698,6 +2716,9 @@ enum nl80211_sta_info {
 	NL80211_STA_INFO_TID_STATS,
 	NL80211_STA_INFO_RX_DURATION,
 	NL80211_STA_INFO_PAD,
+	NL80211_STA_INFO_NOISE,
+	NL80211_STA_INFO_SNR,
+	NL80211_STA_INFO_CNAHLOAD,
 
 	/* keep last */
 	__NL80211_STA_INFO_AFTER_LAST,
@@ -3712,6 +3733,9 @@ enum nl80211_mfp {
 enum nl80211_wpa_versions {
 	NL80211_WPA_VERSION_1 = 1 << 0,
 	NL80211_WPA_VERSION_2 = 1 << 1,
+#if defined (CONFIG_BCMDHD) || defined (CONFIG_CONNECTIVITY_HI110X)
+	NL80211_WAPI_VERSION_1 = 1 << 2,
+#endif
 };
 
 /**

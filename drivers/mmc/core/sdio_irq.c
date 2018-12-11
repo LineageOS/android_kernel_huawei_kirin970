@@ -61,7 +61,7 @@ static int process_sdio_pending_irqs(struct mmc_host *host)
 		 * register with a Marvell SD8797 card. A dummy CMD52 read to
 		 * function 0 register 0xff can avoid this.
 		 */
-		mmc_io_rw_direct(card, 0, 0, 0xff, 0, &dummy);
+		(void)mmc_io_rw_direct(card, 0, 0, 0xff, 0, &dummy);
 	}
 
 	count = 0;
@@ -105,7 +105,7 @@ static int sdio_irq_thread(void *_host)
 	unsigned long period, idle_period;
 	int ret;
 
-	sched_setscheduler(current, SCHED_FIFO, &param);
+	(void)sched_setscheduler(current, SCHED_FIFO, &param);
 
 	/*
 	 * We want to allow for SDIO cards to work even on non SDIO
@@ -146,10 +146,10 @@ static int sdio_irq_thread(void *_host)
 		 * errors.
 		 */
 		if (ret < 0) {
-			set_current_state(TASK_INTERRUPTIBLE);
+			set_current_state(TASK_INTERRUPTIBLE);/*lint !e446 !e666*/
 			if (!kthread_should_stop())
-				schedule_timeout(HZ);
-			set_current_state(TASK_RUNNING);
+				(void)schedule_timeout(HZ);
+			set_current_state(TASK_RUNNING);/*lint !e446 !e666*/
 		}
 
 		/*
@@ -167,12 +167,12 @@ static int sdio_irq_thread(void *_host)
 			}
 		}
 
-		set_current_state(TASK_INTERRUPTIBLE);
+		set_current_state(TASK_INTERRUPTIBLE);/*lint !e446 !e666*/
 		if (host->caps & MMC_CAP_SDIO_IRQ)
 			host->ops->enable_sdio_irq(host, 1);
 		if (!kthread_should_stop())
-			schedule_timeout(period);
-		set_current_state(TASK_RUNNING);
+			(void)schedule_timeout(period);
+		set_current_state(TASK_RUNNING);/*lint !e446 !e666*/
 	} while (!kthread_should_stop());
 
 	if (host->caps & MMC_CAP_SDIO_IRQ)
@@ -232,7 +232,7 @@ static int sdio_card_irq_put(struct mmc_card *card)
 static void sdio_single_irq_set(struct mmc_card *card)
 {
 	struct sdio_func *func;
-	int i;
+	unsigned int i;
 
 	card->sdio_single_irq = NULL;
 	if ((card->host->caps & MMC_CAP_SDIO_IRQ) &&
@@ -319,7 +319,7 @@ int sdio_release_irq(struct sdio_func *func)
 	if (ret)
 		return ret;
 
-	reg &= ~(1 << func->num);
+	reg &= ~(1 << func->num);/*lint !e502*/
 
 	/* Disable master interrupt with the last function interrupt */
 	if (!(reg & 0xFE))

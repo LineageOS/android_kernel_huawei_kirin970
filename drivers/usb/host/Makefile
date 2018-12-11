@@ -18,6 +18,8 @@ ifneq ($(CONFIG_USB_XHCI_MTK), )
 endif
 
 xhci-plat-hcd-y := xhci-plat.o
+xhci-plat-hcd-$(CONFIG_HISI_DEBUG_FS) += xhci-debugfs.o
+xhci-plat-hcd-$(CONFIG_USB_DWC3_NYET_ABNORMAL) += xhci-local-mem.o
 ifneq ($(CONFIG_USB_XHCI_MVEBU), )
 	xhci-plat-hcd-y		+= xhci-mvebu.o
 endif

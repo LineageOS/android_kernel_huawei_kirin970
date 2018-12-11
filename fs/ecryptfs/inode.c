@@ -242,10 +242,34 @@ int ecryptfs_initialize_file(struct dentry *ecryptfs_dentry,
 			ecryptfs_dentry, rc);
 		goto out;
 	}
+
+#ifdef CONFIG_ECRYPT_FS_FILTER
+        mutex_lock(&crypt_stat->cs_mutex);
+        if (crypt_stat->flags & ECRYPTFS_ENCRYPTED) {
+                struct dentry *fp_dentry =ecryptfs_inode_to_private(ecryptfs_inode)->lower_file->f_path.dentry;
+                struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
+                        &(ecryptfs_superblock_to_private(ecryptfs_dentry->d_sb)
+                        ->mount_crypt_stat);
+                if ((mount_crypt_stat->flags & ECRYPTFS_ENABLE_FILTERING) &&
+                (is_file_dir_match(mount_crypt_stat,fp_dentry))) {
+                        crypt_stat->flags &= ~(ECRYPTFS_I_SIZE_INITIALIZED| ECRYPTFS_ENCRYPTED);
+                        ecryptfs_put_lower_file(ecryptfs_inode);
+                }
+                else {
+                        rc = ecryptfs_write_metadata(ecryptfs_dentry, ecryptfs_inode);
+                        if (rc){
+                                printk(KERN_ERR "ENCRYPTSD_FILTER Error writing headers; rc = [%d]\n" , rc);
+                        }
+                        ecryptfs_put_lower_file(ecryptfs_inode);
+                }
+        }
+       mutex_unlock(&crypt_stat->cs_mutex);
+#else
 	rc = ecryptfs_write_metadata(ecryptfs_dentry, ecryptfs_inode);
 	if (rc)
 		printk(KERN_ERR "Error writing headers; rc = [%d]\n", rc);
 	ecryptfs_put_lower_file(ecryptfs_inode);
+#endif
 out:
 	return rc;
 }
@@ -284,8 +308,7 @@ ecryptfs_create(struct inode *directory_inode, struct dentry *ecryptfs_dentry,
 		iget_failed(ecryptfs_inode);
 		goto out;
 	}
-	unlock_new_inode(ecryptfs_inode);
-	d_instantiate(ecryptfs_dentry, ecryptfs_inode);
+	d_instantiate_new(ecryptfs_dentry, ecryptfs_inode);
 out:
 	return rc;
 }
@@ -1017,7 +1040,7 @@ ecryptfs_setxattr(struct dentry *dentry, struct inode *inode,
 		rc = -EOPNOTSUPP;
 		goto out;
 	}
-	rc = vfs_setxattr(lower_dentry, name, value, size, flags);
+	rc = vfs_setxattr(NULL, lower_dentry, name, value, size, flags);
 	if (!rc && inode)
 		fsstack_copy_attr_all(inode, d_inode(lower_dentry));
 out:

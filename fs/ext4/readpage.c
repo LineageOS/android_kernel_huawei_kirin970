@@ -153,12 +153,22 @@ int ext4_mpage_readpages(struct address_space *mapping,
 	struct block_device *bdev = inode->i_sb->s_bdev;
 	int length;
 	unsigned relative_block = 0;
+	unsigned io_submited = 0;
 	struct ext4_map_blocks map;
 
 	map.m_pblk = 0;
 	map.m_lblk = 0;
 	map.m_len = 0;
 	map.m_flags = 0;
+
+	if (pages)
+		/*
+		 * Get one quota before read pages, when this ends,
+		 * get the rest of quotas according to how many bios
+		 * we submited in this routine.
+		 */
+		blk_throtl_get_quota(bdev, PAGE_SIZE,
+				     msecs_to_jiffies(100), true);
 
 	for (; nr_pages; nr_pages--) {
 		int fully_mapped = 1;
@@ -274,6 +284,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		 */
 		if (bio && (last_block_in_bio != blocks[0] - 1)) {
 		submit_and_realloc:
+			io_submited++;
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		}
@@ -307,6 +318,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		if (((map.m_flags & EXT4_MAP_BOUNDARY) &&
 		     (relative_block == map.m_len)) ||
 		    (first_hole != blocks_per_page)) {
+			io_submited++;
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		} else
@@ -314,6 +326,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		goto next_page;
 	confused:
 		if (bio) {
+			io_submited++;
 			ext4_submit_bio_read(bio);
 			bio = NULL;
 		}
@@ -326,7 +339,14 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			put_page(page);
 	}
 	BUG_ON(pages && !list_empty(pages));
-	if (bio)
+	if (bio) {
+		io_submited++;
 		ext4_submit_bio_read(bio);
+	}
+
+	if (io_submited)
+		while (--io_submited)
+			blk_throtl_get_quota(bdev, PAGE_SIZE,
+					     msecs_to_jiffies(100), true);
 	return 0;
 }

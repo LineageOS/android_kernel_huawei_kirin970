@@ -53,7 +53,7 @@ FILE *depfile; /* = NULL */
 struct srcfile_state *current_srcfile; /* = NULL */
 
 /* Detect infinite include recursion. */
-#define MAX_SRCFILE_DEPTH     (100)
+#define MAX_SRCFILE_DEPTH     (200)
 static int srcfile_depth; /* = 0 */
 
 

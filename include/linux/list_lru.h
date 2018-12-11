@@ -82,6 +82,14 @@ void memcg_drain_all_list_lrus(int src_idx, int dst_idx);
  * Return value: true if the list was updated, false otherwise
  */
 bool list_lru_add(struct list_lru *lru, struct list_head *item);
+#ifdef CONFIG_TASK_PROTECT_LRU
+/*
+ * move an element to the lru list's tail
+ * @list_lru: the lru pointer
+ * @item: the item to be added.
+ */
+void list_lru_move(struct list_lru *lru, struct list_head *item);
+#endif
 
 /**
  * list_lru_del: delete an element to the lru list

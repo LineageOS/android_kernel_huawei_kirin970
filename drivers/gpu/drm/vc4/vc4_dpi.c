@@ -52,13 +52,11 @@
 # define DPI_FORMAT_SHIFT		11
 /* This define is named in the hardware, but actually just outputs 0. */
 # define DPI_FORMAT_9BIT_666_RGB	0
-/* Outputs 00000000rrrrrggggggbbbbb */
 # define DPI_FORMAT_16BIT_565_RGB_1	1
 /* Outputs 000rrrrr00gggggg000bbbbb */
 # define DPI_FORMAT_16BIT_565_RGB_2	2
 /* Outputs 00rrrrr000gggggg00bbbbb0 */
 # define DPI_FORMAT_16BIT_565_RGB_3	3
-/* Outputs 000000rrrrrrggggggbbbbbb */
 # define DPI_FORMAT_18BIT_666_RGB_1	4
 /* Outputs 00rrrrrr00gggggg00bbbbbb */
 # define DPI_FORMAT_18BIT_666_RGB_2	5

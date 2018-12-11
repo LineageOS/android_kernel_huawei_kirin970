@@ -246,6 +246,30 @@ void __check_object_size(const void *ptr, unsigned long n, bool to_user)
 	if (err)
 		goto report;
 
+#if !defined(CONFIG_HARDENED_USERCOPY_PAGESPAN) && !defined(CONFIG_ARCH_THREAD_STACK_ALLOCATOR) && (THREAD_SIZE >= PAGE_SIZE || defined(CONFIG_VMAP_STACK))
+	/* Check for bad stack object. */
+	switch (check_stack_object(ptr, n)) {
+	case NOT_STACK:
+		/* Object is not touching the current process stack. */
+		break;
+	case GOOD_FRAME:
+	case GOOD_STACK:
+		/*
+		 * Object is either in the correct frame (when it
+		 * is possible to check) or just generally on the
+		 * process stack (when frame checking not available).
+		 */
+		return;
+	default:
+		err = "<process stack>";
+		goto report;
+	}
+
+	/* Check for bad heap object. */
+	err = check_heap_object(ptr, n, to_user);
+	if (err)
+		goto report;
+#else
 	/* Check for bad heap object. */
 	err = check_heap_object(ptr, n, to_user);
 	if (err)
@@ -268,6 +292,7 @@ void __check_object_size(const void *ptr, unsigned long n, bool to_user)
 		err = "<process stack>";
 		goto report;
 	}
+#endif
 
 	/* Check for object in kernel to avoid text exposure. */
 	err = check_kernel_text_object(ptr, n);

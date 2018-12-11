@@ -109,6 +109,11 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 			     size_t align, unsigned int heap_id_mask,
 			     unsigned int flags);
 
+
+struct ion_handle *__ion_alloc(struct ion_client *client, size_t len,
+			     size_t align, unsigned int heap_id_mask,
+			     unsigned int flags, bool grab_handle);
+
 /**
  * ion_free - free a handle
  * @client:	the client
@@ -151,6 +156,31 @@ struct dma_buf *ion_share_dma_buf(struct ion_client *client,
 int ion_share_dma_buf_fd(struct ion_client *client, struct ion_handle *handle);
 
 /**
+ * ion_map_iommu() - create iommu mapping for the given handle
+ * @client:	the client
+ * @handle:	the handle
+ * @format:	the format of iommu mapping
+ */
+int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
+		struct iommu_map_format *format);
+
+/**
+ * ion_unmap_iommu() - destroy a iommu mapping for a handle
+ * @client:	the client
+ * @handle:	the handle
+ */
+void ion_unmap_iommu(struct ion_client *client, struct ion_handle *handle);
+
+/**
+ * ion_change_flags() - change buffer flags
+ * @client:	the client
+ * @handle:	the handle
+ * @flags: flags
+ */
+int ion_change_flags(struct ion_client *client,
+		struct ion_handle *handle, int flags);
+
+/**
  * ion_import_dma_buf() - get ion_handle from dma-buf
  * @client:	the client
  * @dmabuf:	the dma-buf
@@ -173,4 +203,20 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client,
  */
 struct ion_handle *ion_import_dma_buf_fd(struct ion_client *client, int fd);
 
+int ion_sync_for_cpu(struct ion_client *client, int fd);
+int ion_sync_for_device(struct ion_client *client, int fd);
+size_t ion_get_used_memory(struct ion_heap *heap);
+
+
+
+/**
+* ion_secmem_get_phys - returns the physical address and len of a handle,
+							just for tzdriver
+* @client:»       the client
+* @handle:»       the handle
+* @addr:»       a pointer to put the address in
+* @len:»       a pointer to put the length in
+*/
+int ion_secmem_get_phys(struct ion_client *client, struct ion_handle *handle,
+			ion_phys_addr_t *addr, size_t *len);
 #endif /* _LINUX_ION_H */

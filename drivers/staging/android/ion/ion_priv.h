@@ -30,6 +30,12 @@
 
 #include "ion.h"
 
+struct ion_iommu_map {
+	struct ion_buffer *buffer;
+	struct kref ref;
+	struct iommu_map_format format;
+};
+
 /**
  * struct ion_buffer - metadata for a particular buffer
  * @ref:		reference count
@@ -78,6 +84,10 @@ struct ion_buffer {
 	int handle_count;
 	char task_comm[TASK_COMM_LEN];
 	pid_t pid;
+	struct ion_iommu_map *iommu_map;
+#ifdef CONFIG_ION_HISI_SECSG
+	unsigned int id;
+#endif
 };
 void ion_buffer_destroy(struct ion_buffer *buffer);
 
@@ -86,7 +96,8 @@ void ion_buffer_destroy(struct ion_buffer *buffer);
  * @dev:		the actual misc device
  * @buffers:		an rb tree of all the existing buffers
  * @buffer_lock:	lock protecting the tree of buffers
- * @lock:		rwsem protecting the tree of heaps and clients
+ * @client_lock:	rwsem protecting the tree of clients
+ * @heap_lock:		rwsem protecting the tree of heaps
  * @heaps:		list of all the heaps in the system
  * @user_clients:	list of all the clients created from userspace
  */
@@ -94,7 +105,8 @@ struct ion_device {
 	struct miscdevice dev;
 	struct rb_root buffers;
 	struct mutex buffer_lock;
-	struct rw_semaphore lock;
+	struct rw_semaphore client_lock;
+	struct rw_semaphore heap_lock;
 	struct plist_head heaps;
 	long (*custom_ioctl)(struct ion_client *client, unsigned int cmd,
 			     unsigned long arg);
@@ -154,6 +166,7 @@ struct ion_handle {
 	struct rb_node node;
 	unsigned int kmap_cnt;
 	int id;
+	int import;
 };
 
 /**
@@ -180,6 +193,10 @@ struct ion_heap_ops {
 	void (*unmap_kernel)(struct ion_heap *heap, struct ion_buffer *buffer);
 	int (*map_user)(struct ion_heap *mapper, struct ion_buffer *buffer,
 			struct vm_area_struct *vma);
+	int (*map_iommu)(struct ion_buffer *buffer,
+			struct ion_iommu_map *map_data);
+	void (*unmap_iommu)(struct ion_iommu_map *map_data);
+	void (*buffer_zero)(struct ion_buffer *buffer);
 	int (*shrink)(struct ion_heap *heap, gfp_t gfp_mask, int nr_to_scan);
 };
 
@@ -291,6 +308,10 @@ void *ion_heap_map_kernel(struct ion_heap *, struct ion_buffer *);
 void ion_heap_unmap_kernel(struct ion_heap *, struct ion_buffer *);
 int ion_heap_map_user(struct ion_heap *, struct ion_buffer *,
 			struct vm_area_struct *);
+int ion_heap_map_iommu(struct ion_buffer *buffer,
+			struct ion_iommu_map *map_data);
+void ion_heap_unmap_iommu(struct ion_iommu_map *map_data);
+void ion_flush_all_cpus_caches(void);
 int ion_heap_buffer_zero(struct ion_buffer *buffer);
 int ion_heap_pages_zero(struct page *page, size_t size, pgprot_t pgprot);
 
@@ -370,6 +391,11 @@ size_t ion_heap_freelist_size(struct ion_heap *heap);
  * architectures can add their own custom architecture specific
  * heaps as appropriate.
  */
+#ifdef CONFIG_HISI_SPECIAL_SCENE_POOL
+void *ion_get_scene_pool(struct ion_heap *ptr_heap);
+struct ion_heap *ion_get_system_heap(void);
+unsigned long ion_scene_pool_total_size(void);
+#endif
 
 struct ion_heap *ion_heap_create(struct ion_platform_heap *);
 void ion_heap_destroy(struct ion_heap *);
@@ -386,6 +412,65 @@ struct ion_heap *ion_chunk_heap_create(struct ion_platform_heap *);
 void ion_chunk_heap_destroy(struct ion_heap *);
 struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *);
 void ion_cma_heap_destroy(struct ion_heap *);
+
+struct ion_heap *ion_cma_pool_heap_create(struct ion_platform_heap *);
+void ion_cma_pool_heap_destroy(struct ion_heap *);
+
+#ifdef CONFIG_ION_HISI_SECCM
+struct ion_heap *ion_seccm_heap_create(struct ion_platform_heap *);
+void ion_seccm_heap_destroy(struct ion_heap *);
+#else
+static inline struct ion_heap *ion_seccm_heap_create(struct ion_platform_heap
+		*iph)
+{
+	return NULL;
+}
+static inline void ion_seccm_heap_destroy(struct ion_heap *ih){ }
+#endif
+
+#ifdef CONFIG_ION_HISI_SECSG
+struct ion_heap *ion_secsg_heap_create(struct ion_platform_heap *);
+void ion_secsg_heap_destroy(struct ion_heap *);
+#else
+static inline struct ion_heap *ion_secsg_heap_create(struct ion_platform_heap
+		*iph)
+{
+	return NULL;
+}
+static inline void ion_secsg_heap_destroy(struct ion_heap *ih){ }
+#endif
+
+#if (defined CONFIG_ION_HISI_SECSG) || (defined CONFIG_ION_HISI_SECCM)
+int ion_secmem_heap_phys(struct ion_heap *heap,
+		struct ion_buffer *buffer,
+		ion_phys_addr_t *addr, size_t *len);
+#else
+static inline int ion_secmem_heap_phys(struct ion_heap *heap,
+		struct ion_buffer *buffer,
+		ion_phys_addr_t *addr, size_t *len)
+{
+	pr_err("%s: not sec mem!\n", __func__);
+	return -EINVAL;
+}
+#endif
+
+#ifdef CONFIG_ION_HISI_DMA_POOL
+struct ion_heap *ion_dma_pool_heap_create(struct ion_platform_heap *);
+void ion_dma_pool_heap_destroy(struct ion_heap *);
+void ion_register_dma_camera_cma(void *cma);
+void ion_clean_dma_camera_cma(void);
+
+#else
+static inline struct ion_heap *ion_dma_pool_heap_create(struct ion_platform_heap
+		*iph)
+{
+	return NULL;
+}
+static inline void ion_dma_pool_heap_destroy(struct ion_heap *ih){ }
+static inline void ion_register_dma_camera_cma(void *cma){ }
+static inline void ion_clean_dma_camera_cma(void){ }
+
+#endif
 
 /**
  * functions for creating and destroying a heap pool -- allows you
@@ -422,14 +507,21 @@ struct ion_page_pool {
 	struct mutex mutex;
 	gfp_t gfp_mask;
 	unsigned int order;
+	bool graphic_buffer_flag;
 	struct plist_node list;
 };
 
 struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order,
-					   bool cached);
+                                           bool cached, bool graphic_buffer_flag);
 void ion_page_pool_destroy(struct ion_page_pool *);
 struct page *ion_page_pool_alloc(struct ion_page_pool *);
 void ion_page_pool_free(struct ion_page_pool *, struct page *);
+void ion_page_pool_free_immediate(struct ion_page_pool *, struct page *);
+
+void *ion_page_pool_alloc_pages(struct ion_page_pool *pool);
+int ion_system_heap_create_pools(struct ion_page_pool **pools,
+                                 bool cached, bool graphic_buffer_flag);
+void ion_system_heap_destroy_pools(struct ion_page_pool **pools);
 
 /** ion_page_pool_shrink - shrinks the size of the memory cached in the pool
  * @pool:		the pool

@@ -96,7 +96,7 @@ MODULE_PARM_DESC(enable, "Enable the EMU10K1X soundcard.");
 #define HCFG_AUDIOENABLE	0x00000001	/* 0 = CODECs transmit zero-valued samples	*/
 						/* Should be set to 1 when the EMU10K1 is	*/
 						/* completely initialized.			*/
-#define GPIO			0x18		/* Defaults: 00001080-Analog, 00001000-SPDIF.   */
+#define GPIO			0x18
 
 
 #define AC97DATA		0x1c		/* AC97 register set data register (16 bit)	*/

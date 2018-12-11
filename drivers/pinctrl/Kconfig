@@ -256,6 +256,18 @@ config PINCTRL_ZYNQ
 	help
 	  This selects the pinctrl driver for Xilinx Zynq.
 
+config PINCTRL_SEC
+	default n
+	bool "Hisilicon sec pinctrl driver"
+	select PINMUX
+	select PINCONF
+
+config HISI_PINCRTL_INFO
+        bool "Hisilicon pins info for debug fs"
+        depends on PINCTRL_SINGLE
+        help
+          Say yes here to support pins info for debug fs
+
 source "drivers/pinctrl/aspeed/Kconfig"
 source "drivers/pinctrl/bcm/Kconfig"
 source "drivers/pinctrl/berlin/Kconfig"

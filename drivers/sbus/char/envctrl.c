@@ -441,12 +441,7 @@ static int envctrl_i2c_fan_status(struct i2c_child_t *pchild,
 		/* No bits are on. No fans are functioning. */
 		ret = ENVCTRL_ALL_FANS_BAD;
 	} else {
-		/* Go through all channels, mark 'on' the matched bits.
-		 * Notice that fan_mask may have discontiguous bits but
-		 * return mask are always contiguous. For example if we
-		 * monitor 4 fans at channels 0,1,2,4, the return mask
-		 * should be 00010000 if only fan at channel 4 is working.
-		 */
+		
 		for (i = 0; i < PCF8584_MAX_CHANNELS;i++) {
 			if (pchild->fan_mask & chnls_mask[i]) {
 				if (!(chnls_mask[i] & tmp))

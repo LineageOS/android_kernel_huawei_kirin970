@@ -149,10 +149,14 @@ static void set_cpu_itimer(struct task_struct *tsk, unsigned int clock_id,
 	u32 error, incr_error;
 	struct cpu_itimer *it = &tsk->signal->it[clock_id];
 
+	/*
+	 * Use the to_ktime conversion because that clamps the maximum
+	 * value to KTIME_MAX and avoid multiplication overflows.
+	 */
 	nval = timeval_to_cputime(&value->it_value);
-	ns_nval = timeval_to_ns(&value->it_value);
+	ns_nval = ktime_to_ns(timeval_to_ktime(value->it_value));
 	ninterval = timeval_to_cputime(&value->it_interval);
-	ns_ninterval = timeval_to_ns(&value->it_interval);
+	ns_ninterval = ktime_to_ns(timeval_to_ktime(value->it_interval));
 
 	error = cputime_sub_ns(nval, ns_nval);
 	incr_error = cputime_sub_ns(ninterval, ns_ninterval);

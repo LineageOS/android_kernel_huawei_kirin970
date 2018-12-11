@@ -933,6 +933,7 @@ void hotplug_cpu__broadcast_tick_pull(int deadcpu)
 {
 	struct clock_event_device *bc;
 	unsigned long flags;
+	unsigned int cpu;
 
 	raw_spin_lock_irqsave(&tick_broadcast_lock, flags);
 	bc = tick_broadcast_device.evtdev;
@@ -941,6 +942,11 @@ void hotplug_cpu__broadcast_tick_pull(int deadcpu)
 		/* This moves the broadcast assignment to this CPU: */
 		clockevents_program_event(bc, bc->next_event, 1);
 	}
+
+	/*deadcpu already removed from online_mask*/
+	cpu = cpumask_first(cpu_online_mask);
+	tick_broadcast_set_affinity(bc, cpumask_of(cpu));
+
 	raw_spin_unlock_irqrestore(&tick_broadcast_lock, flags);
 }
 

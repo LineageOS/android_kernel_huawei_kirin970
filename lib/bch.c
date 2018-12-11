@@ -217,17 +217,7 @@ void encode_bch(struct bch_control *bch, const uint8_t *data,
 	len  -= 4*mlen;
 	memcpy(r, bch->ecc_buf, sizeof(r));
 
-	/*
-	 * split each 32-bit word into 4 polynomials of weight 8 as follows:
-	 *
-	 * 31 ...24  23 ...16  15 ... 8  7 ... 0
-	 * xxxxxxxx  yyyyyyyy  zzzzzzzz  tttttttt
-	 *                               tttttttt  mod g = r0 (precomputed)
-	 *                     zzzzzzzz  00000000  mod g = r1 (precomputed)
-	 *           yyyyyyyy  00000000  00000000  mod g = r2 (precomputed)
-	 * xxxxxxxx  00000000  00000000  00000000  mod g = r3 (precomputed)
-	 * xxxxxxxx  yyyyyyyy  zzzzzzzz  tttttttt  mod g = r0^r1^r2^r3
-	 */
+	
 	while (mlen--) {
 		/* input data is read in big-endian format */
 		w = r[0]^cpu_to_be32(*pdata++);

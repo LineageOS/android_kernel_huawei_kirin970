@@ -180,9 +180,6 @@ static int tcf_csum_ipv4_tcp(struct sk_buff *skb, unsigned int ihl,
 	struct tcphdr *tcph;
 	const struct iphdr *iph;
 
-	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4)
-		return 1;
-
 	tcph = tcf_csum_skb_nextlayer(skb, ihl, ipl, sizeof(*tcph));
 	if (tcph == NULL)
 		return 0;
@@ -203,9 +200,6 @@ static int tcf_csum_ipv6_tcp(struct sk_buff *skb, unsigned int ihl,
 {
 	struct tcphdr *tcph;
 	const struct ipv6hdr *ip6h;
-
-	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6)
-		return 1;
 
 	tcph = tcf_csum_skb_nextlayer(skb, ihl, ipl, sizeof(*tcph));
 	if (tcph == NULL)
@@ -229,9 +223,6 @@ static int tcf_csum_ipv4_udp(struct sk_buff *skb, unsigned int ihl,
 	struct udphdr *udph;
 	const struct iphdr *iph;
 	u16 ul;
-
-	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
-		return 1;
 
 	/*
 	 * Support both UDP and UDPLITE checksum algorithms, Don't use
@@ -285,9 +276,6 @@ static int tcf_csum_ipv6_udp(struct sk_buff *skb, unsigned int ihl,
 	struct udphdr *udph;
 	const struct ipv6hdr *ip6h;
 	u16 ul;
-
-	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_UDP)
-		return 1;
 
 	/*
 	 * Support both UDP and UDPLITE checksum algorithms, Don't use

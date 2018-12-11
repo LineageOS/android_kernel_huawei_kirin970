@@ -18,6 +18,11 @@
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
 #include <linux/sysfs.h>
+#ifdef CONFIG_HISI_CPUFREQ
+#include <linux/uidgid.h>
+#include <linux/slab.h>
+#include <linux/syscalls.h>
+#endif
 
 /*********************************************************************
  *                        CPUFREQ INTERFACE                          *
@@ -420,6 +425,9 @@ static inline void cpufreq_resume(void) {}
 
 #define CPUFREQ_TRANSITION_NOTIFIER	(0)
 #define CPUFREQ_POLICY_NOTIFIER		(1)
+#ifdef CONFIG_HISI_CORE_CTRL
+#define CPUFREQ_GOVINFO_NOTIFIER	(2)
+#endif
 
 /* Transition notifiers */
 #define CPUFREQ_PRECHANGE		(0)
@@ -431,6 +439,23 @@ static inline void cpufreq_resume(void) {}
 #define CPUFREQ_START			(2)
 #define CPUFREQ_CREATE_POLICY		(3)
 #define CPUFREQ_REMOVE_POLICY		(4)
+
+#ifdef CONFIG_HISI_CORE_CTRL
+/* Govinfo Notifiers */
+#define CPUFREQ_LOAD_CHANGE		(0)
+
+/*
+ * Governor specific info that can be passed to modules that subscribe
+ * to CPUFREQ_GOVINFO_NOTIFIER
+ */
+struct cpufreq_govinfo {
+	unsigned int cpu;
+	unsigned int load;
+	unsigned int sampling_rate_us;
+};
+extern struct atomic_notifier_head cpufreq_govinfo_notifier_list;
+
+#endif /* CONFIG_HISI_CORE_CTRL */
 
 #ifdef CONFIG_CPU_FREQ
 int cpufreq_register_notifier(struct notifier_block *nb, unsigned int list);
@@ -570,6 +595,73 @@ struct governor_attr {
 	ssize_t (*store)(struct gov_attr_set *attr_set, const char *buf,
 			 size_t count);
 };
+
+#ifdef CONFIG_HISI_CPUFREQ
+#define SYSTEM_UID (uid_t)1000
+#define SYSTEM_GID (uid_t)1000
+
+struct governor_user_attr {
+	const char *name;
+	uid_t uid;
+	gid_t gid;
+	mode_t mode;
+};
+
+#define INVALID_ATTR \
+	{.name = NULL, .uid = (uid_t)(-1), .gid = (uid_t)(-1), .mode = 0000}
+
+static inline void gov_sysfs_set_attr(unsigned int cpu, char *gov_name,
+					struct governor_user_attr *attrs)
+{
+	char *buf = NULL;
+	int i = 0, gov_dir_len, gov_attr_len;
+	long ret;
+	mm_segment_t fs = 0;
+
+	buf = kzalloc(PATH_MAX, GFP_KERNEL);
+	if (!buf)
+		return;
+
+	gov_dir_len = scnprintf(buf, PATH_MAX,
+				"/sys/devices/system/cpu/cpu%u/cpufreq/%s/",
+				cpu, gov_name);
+
+	fs = get_fs(); /*lint !e501*/
+	set_fs(KERNEL_DS); /*lint !e501*/
+
+	while (attrs[i].name) {
+		gov_attr_len = scnprintf(buf + gov_dir_len,
+					 PATH_MAX - gov_dir_len, attrs[i].name);
+
+
+		if (gov_dir_len + gov_attr_len >= PATH_MAX) {
+			i++;
+			continue;
+		}
+		buf[gov_dir_len + gov_attr_len] = '\0';
+
+		ret = sys_chown(buf, attrs[i].uid, attrs[i].gid);
+		if (ret)
+			pr_debug("chown fail:%s ret=%ld\n", buf, ret);
+
+		ret = sys_chmod(buf, attrs[i].mode);
+		if (ret)
+			pr_debug("chmod fail:%s ret=%ld\n", buf, ret);
+		i++;
+	}
+
+	set_fs(fs);
+	kfree(buf);
+
+	return;
+}
+#else
+static inline void gov_sysfs_set_attr(unsigned int cpu, char *gov_name,
+					struct governor_user_attr *attrs)
+{
+}
+#endif
+
 /* CPUFREQ DEFAULT GOVERNOR */
 /*
  * Performance governor is fallback governor if any other gov failed to auto
@@ -612,6 +704,9 @@ struct cpufreq_frequency_table {
 	unsigned int	driver_data; /* driver specific data, not used by core */
 	unsigned int	frequency; /* kHz - doesn't need to be in ascending
 				    * order */
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	unsigned int	electric_current; /*mircoamp*/
+#endif
 };
 
 #if defined(CONFIG_CPU_FREQ) && defined(CONFIG_PM_OPP)
@@ -932,6 +1027,6 @@ int cpufreq_generic_init(struct cpufreq_policy *policy,
 
 struct sched_domain;
 unsigned long cpufreq_scale_freq_capacity(struct sched_domain *sd, int cpu);
-unsigned long cpufreq_scale_max_freq_capacity(struct sched_domain *sd, int cpu);
-unsigned long cpufreq_scale_min_freq_capacity(struct sched_domain *sd, int cpu);
+unsigned long cpufreq_scale_max_freq_capacity(int cpu);
+
 #endif /* _LINUX_CPUFREQ_H */

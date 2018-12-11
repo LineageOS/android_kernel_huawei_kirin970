@@ -98,6 +98,16 @@
 ENTRY(_mcount)
 	mcount_enter
 
+#ifdef CONFIG_HISI_RECORD_SP
+	mrs     x1,MPIDR_EL1 //MPIDR_EL1
+	and 	   x2,x1,#0x100
+	and 	   x1,x1,#0x3
+	add	   x2,x2,x1, lsl #0x6
+	adrp   x1, sp_reg
+	add	  x1, x1, #:lo12:sp_reg
+	str     x29, [x1,x2]
+#endif
+
 	adrp	x0, ftrace_trace_function
 	ldr	x2, [x0, #:lo12:ftrace_trace_function]
 	adr	x0, ftrace_stub

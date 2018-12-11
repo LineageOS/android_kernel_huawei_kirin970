@@ -85,6 +85,20 @@ config SERIAL_EARLYCON_ARM_SEMIHOST
 	  with "earlycon=smh" on the kernel command line. The console is
 	  enabled when early_param is processed.
 
+config HISI_AMBA_PL011
+	bool "hisi uart amba_pl011"
+	default n
+
+config HISI_UART_OVERSAMPLING
+	bool "hisi uart oversampling"
+	select HISI_AMBA_PL011
+	default n
+
+config HISI_NEED_SG_DMA_LENGTH
+	bool "hisi need sg dma length"
+	select HISI_AMBA_PL011
+	default n
+
 config SERIAL_SB1250_DUART
 	tristate "BCM1xxx on-chip DUART serial support"
 	depends on SIBYTE_SB1xxx_SOC=y

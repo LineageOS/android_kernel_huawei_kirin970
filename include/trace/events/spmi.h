@@ -4,7 +4,11 @@
 #if !defined(_TRACE_SPMI_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_SPMI_H
 
+#ifdef CONFIG_HISI_SPMI
+#include <linux/hisi-spmi.h>
+#else
 #include <linux/spmi.h>
+#endif
 #include <linux/tracepoint.h>
 
 /*

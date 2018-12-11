@@ -31,6 +31,7 @@ struct ovl_config {
 	char *upperdir;
 	char *workdir;
 	bool default_permissions;
+	bool caller_credentials;
 };
 
 /* private information held for overlayfs's superblock */
@@ -182,7 +183,7 @@ void ovl_path_lower(struct dentry *dentry, struct path *path)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
-	*path = oe->numlower ? oe->lowerstack[0] : (struct path) { NULL, NULL };
+	*path = oe->numlower ? oe->lowerstack[0] : (struct path) {};
 }
 
 int ovl_want_write(struct dentry *dentry)
@@ -265,8 +266,12 @@ bool ovl_is_whiteout(struct dentry *dentry)
 const struct cred *ovl_override_creds(struct super_block *sb)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
+	const struct cred *cred = ofs->creator_cred;
 
-	return override_creds(ofs->creator_cred);
+	if (ofs->config.caller_credentials) {
+		return NULL;
+	}
+	return override_creds(cred);
 }
 
 static bool ovl_is_opaquedir(struct dentry *dentry)
@@ -277,7 +282,7 @@ static bool ovl_is_opaquedir(struct dentry *dentry)
 	if (!d_is_dir(dentry))
 		return false;
 
-	res = vfs_getxattr(dentry, OVL_XATTR_OPAQUE, &val, 1);
+	res = vfs_getxattr(NULL, dentry, OVL_XATTR_OPAQUE, &val, 1);
 	if (res == 1 && val == 'y')
 		return true;
 
@@ -584,7 +589,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		ovl_copyattr(realdentry->d_inode, inode);
 	}
 
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	oe->opaque = upperopaque;
 	oe->__upperdentry = upperdentry;
 	memcpy(oe->lowerstack, stack, sizeof(struct path) * ctr);
@@ -603,7 +608,7 @@ out_put:
 out_put_upper:
 	dput(upperdentry);
 out:
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	return ERR_PTR(err);
 }
 
@@ -738,6 +743,8 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 {
 	char *p;
 
+	config->caller_credentials = true;
+
 	while ((p = ovl_next_opt(&opt)) != NULL) {
 		int token;
 		substring_t args[MAX_OPT_ARGS];
@@ -845,11 +852,11 @@ retry:
 		 * allowed as upper are limited to "normal" ones, where checking
 		 * for the above two errors is sufficient.
 		 */
-		err = vfs_removexattr(work, XATTR_NAME_POSIX_ACL_DEFAULT);
+		err = vfs_removexattr(NULL, work, XATTR_NAME_POSIX_ACL_DEFAULT);
 		if (err && err != -ENODATA && err != -EOPNOTSUPP)
 			goto out_dput;
 
-		err = vfs_removexattr(work, XATTR_NAME_POSIX_ACL_ACCESS);
+		err = vfs_removexattr(NULL, work, XATTR_NAME_POSIX_ACL_ACCESS);
 		if (err && err != -ENODATA && err != -EOPNOTSUPP)
 			goto out_dput;
 
@@ -1133,8 +1140,8 @@ static const struct xattr_handler *ovl_xattr_handlers[] = {
 
 static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct path upperpath = { NULL, NULL };
-	struct path workpath = { NULL, NULL };
+	struct path upperpath = {};
+	struct path workpath = {};
 	struct dentry *root_dentry;
 	struct inode *realinode;
 	struct ovl_entry *oe;
@@ -1353,6 +1360,10 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	ovl_copyattr(realinode, d_inode(root_dentry));
 
 	sb->s_root = root_dentry;
+
+#ifdef CONFIG_SECURITY
+	security_sb_clone_mnt_opts(oe->lowerstack[0].mnt->mnt_sb, sb);
+#endif
 
 	return 0;
 

@@ -255,6 +255,10 @@ config HAVE_HW_BREAKPOINT
 	bool
 	depends on PERF_EVENTS
 
+config HAVE_HW_BREAKPOINT_ADDR_MASK
+	bool
+	depends on HAVE_HW_BREAKPOINT
+
 config HAVE_MIXED_BREAKPOINTS_REGS
 	bool
 	depends on HAVE_HW_BREAKPOINT
@@ -361,6 +365,72 @@ menuconfig GCC_PLUGINS
 	  compiler. They are useful for runtime instrumentation and static analysis.
 
 	  See Documentation/gcc-plugins.txt for details.
+config GCC_PLUGIN_RANDSTRUCT
+	bool "Randomize layout of sensitive kernel structures"
+	depends on GCC_PLUGINS
+	select MODVERSIONS if MODULES
+	help
+	  If you say Y here, the layouts of structures that are entirely
+	  function pointers (and have not been manually annotated with
+	  __no_randomize_layout), or structures that have been explicitly
+	  marked with __randomize_layout, will be randomized at compile-time.
+	  This can introduce the requirement of an additional information
+	  exposure vulnerability for exploits targeting these structure
+	  types.
+
+	  Enabling this feature will introduce some performance impact,
+	  slightly increase memory usage, and prevent the use of forensic
+	  tools like Volatility against the system (unless the kernel
+	  source tree isn't cleaned after kernel installation).
+
+	  The seed used for compilation is located at
+	  scripts/gcc-plgins/randomize_layout_seed.h.  It remains after
+	  a make clean to allow for external modules to be compiled with
+	  the existing seed and will be removed by a make mrproper or
+	  make distclean.
+
+	  Note that the implementation requires gcc 4.7 or newer.
+
+	  This plugin was ported from grsecurity/PaX. More information at:
+	   * https://grsecurity.net/
+	   * https://pax.grsecurity.net/
+config GCC_PLUGIN_RANDSTRUCT_PERFORMANCE
+	bool "Use cacheline-aware structure randomization"
+	depends on GCC_PLUGIN_RANDSTRUCT
+	depends on !COMPILE_TEST
+	help
+	  If you say Y here, the RANDSTRUCT randomization will make a
+	  best effort at restricting randomization to cacheline-sized
+	  groups of elements.  It will further not randomize bitfields
+	  in structures.  This reduces the performance hit of RANDSTRUCT
+	  at the cost of weakened randomization.
+
+config GCC_PLUGIN_RANDSTRUCT_OPERATIONS
+	bool "operations structure(funtions pointor) randomization"
+	depends on GCC_PLUGIN_RANDSTRUCT
+	depends on !COMPILE_TEST
+	help
+	  If you say Y here, the RANDSTRUCT randomization will make a
+	  ops struction randomized.
+
+config GCC_PLUGIN_RANDSTRUCT_DEBUGFS
+	bool "open struct layout debugfs node to watch struct layout randomize"
+	depends on GCC_PLUGIN_RANDSTRUCT
+	default n
+	help
+	Turn on the struct layout randomize debugfs
+
+
+config GCC_PLUGIN_STRUCTLEAK
+	bool "Force initialization of variables containing userspace addresses"
+	depends on GCC_PLUGINS
+	help
+	  This plugin zero-initializes any structures that containing a
+	  __user attribute. This can prevent some classes of information
+	  exposures.
+	  This plugin was ported from grsecurity/PaX. More information at:
+	   * https://grsecurity.net/
+	   * https://pax.grsecurity.net/
 
 config GCC_PLUGIN_CYC_COMPLEXITY
 	bool "Compute the cyclomatic complexity of a function"
@@ -490,7 +560,7 @@ config LD_DEAD_CODE_DATA_ELIMINATION
 	  is used to distinguish them from label names / C identifiers.
 
 config LTO
-	def_bool n
+	bool
 
 config ARCH_SUPPORTS_LTO_CLANG
 	bool
@@ -499,15 +569,6 @@ config ARCH_SUPPORTS_LTO_CLANG
 	  - compiling with clang,
 	  - compiling inline assembly with clang's integrated assembler,
 	  - and linking with either lld or GNU gold w/ LLVMgold.
-
-choice
-	prompt "Link-Time Optimization (LTO) (EXPERIMENTAL)"
-	default LTO_NONE
-	help
-	  This option turns on Link-Time Optimization (LTO).
-
-config LTO_NONE
-	bool "None"
 
 config LTO_CLANG
 	bool "Use clang Link Time Optimization (LTO) (EXPERIMENTAL)"
@@ -526,8 +587,6 @@ config LTO_CLANG
           If you select this option, you must compile the kernel with clang >=
           5.0 (make CC=clang) and GNU gold from binutils >= 2.27, and have the
           LLVMgold plug-in in LD_LIBRARY_PATH.
-
-endchoice
 
 config CFI
 	bool

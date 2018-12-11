@@ -31,6 +31,7 @@
 #include <linux/slab.h>
 #include <linux/stop_machine.h>
 #include <linux/mm.h>
+#include <linux/hisi/hisi_hkip.h>
 
 #include <asm/barrier.h>
 #include <asm/cputype.h>
@@ -305,7 +306,7 @@ void __init create_pgd_mapping(struct mm_struct *mm, phys_addr_t phys,
 			     pgd_pgtable_alloc, allow_block_mappings);
 }
 
-static void create_mapping_late(phys_addr_t phys, unsigned long virt,
+void create_mapping_late(phys_addr_t phys, unsigned long virt,
 				  phys_addr_t size, pgprot_t prot)
 {
 	if (virt < VMALLOC_START) {
@@ -397,6 +398,8 @@ void mark_rodata_ro(void)
 	section_size = (unsigned long)__init_begin - (unsigned long)__start_rodata;
 	create_mapping_late(__pa_symbol(__start_rodata), (unsigned long)__start_rodata,
 			    section_size, PAGE_KERNEL_RO);
+
+	hkip_register_ro(__start_rodata, ALIGN(section_size, PAGE_SIZE));
 }
 
 static void __init map_kernel_segment(pgd_t *pgd, void *va_start, void *va_end,
@@ -425,6 +428,7 @@ static int __init map_entry_trampoline(void)
 {
 	extern char __entry_tramp_text_start[];
 
+	/* change to the code which exist in kernel/git/arm64/linux.git */
 	pgprot_t prot = rodata_enabled ? PAGE_KERNEL_ROX : PAGE_KERNEL_EXEC;
 	phys_addr_t pa_start = __pa_symbol(__entry_tramp_text_start);
 
@@ -516,6 +520,9 @@ void __init paging_init(void)
 
 	pgd_clear_fixmap();
 	memblock_free(pgd_phys, PAGE_SIZE);
+
+	/* Ensure the zero page is visible to the page table walker */
+	dsb(ishst);
 
 	/*
 	 * We only reuse the PGD from the swapper_pg_dir, not the pud + pmd

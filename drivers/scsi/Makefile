@@ -197,3 +197,7 @@ $(obj)/53c700_d.h: $(src)/53c700.scr $(src)/script_asm.pl
 	$(PERL) -s $(src)/script_asm.pl -ncr7x0_family $@ $(@:_d.h=_u.h) < $<
 
 endif
+
+ifeq ($(TARGET_VERSION_MODE),factory)
+    EXTRA_CFLAGS += -DBYPASS_AUTHORITY_VERIFY
+endif

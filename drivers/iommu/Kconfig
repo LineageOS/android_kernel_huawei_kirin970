@@ -272,6 +272,8 @@ config EXYNOS_IOMMU_DEBUG
 
 	  Say N unless you need kernel log message for IOMMU debugging.
 
+source "drivers/iommu/hisi/Kconfig"
+
 config IPMMU_VMSA
 	bool "Renesas VMSA-compatible IPMMU"
 	depends on ARM_LPAE

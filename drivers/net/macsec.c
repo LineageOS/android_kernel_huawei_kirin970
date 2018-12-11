@@ -742,12 +742,7 @@ static struct sk_buff *macsec_encrypt(struct sk_buff *skb,
 	macsec_fill_iv(iv, secy->sci, pn);
 
 	sg_init_table(sg, ret);
-	ret = skb_to_sgvec(skb, sg, 0, skb->len);
-	if (unlikely(ret < 0)) {
-		macsec_txsa_put(tx_sa);
-		kfree_skb(skb);
-		return ERR_PTR(ret);
-	}
+	skb_to_sgvec(skb, sg, 0, skb->len);
 
 	if (tx_sc->encrypt) {
 		int len = skb->len - macsec_hdr_len(sci_present) -
@@ -954,11 +949,7 @@ static struct sk_buff *macsec_decrypt(struct sk_buff *skb,
 	macsec_fill_iv(iv, sci, ntohl(hdr->packet_number));
 
 	sg_init_table(sg, ret);
-	ret = skb_to_sgvec(skb, sg, 0, skb->len);
-	if (unlikely(ret < 0)) {
-		kfree_skb(skb);
-		return ERR_PTR(ret);
-	}
+	skb_to_sgvec(skb, sg, 0, skb->len);
 
 	if (hdr->tci_an & MACSEC_TCI_E) {
 		/* confidentiality: ethernet + macsec header

@@ -37,6 +37,9 @@
 #include <linux/kallsyms.h>
 #include <linux/proc_fs.h>
 #include <linux/export.h>
+#ifdef CONFIG_HISI_CPU_ISOLATION
+#include <linux/cpumask.h>
+#endif
 
 #include <asm/hardware/cache-l2x0.h>
 #include <asm/hardware/cache-uniphier.h>
@@ -127,6 +130,9 @@ static bool migrate_one_irq(struct irq_desc *desc)
 	const struct cpumask *affinity = irq_data_get_affinity_mask(d);
 	struct irq_chip *c;
 	bool ret = false;
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	struct cpumask available_cpus;
+#endif
 
 	/*
 	 * If this is a per-CPU interrupt, or the affinity does not
@@ -135,8 +141,36 @@ static bool migrate_one_irq(struct irq_desc *desc)
 	if (irqd_is_per_cpu(d) || !cpumask_test_cpu(smp_processor_id(), affinity))
 		return false;
 
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	cpumask_copy(&available_cpus, affinity);
+	cpumask_andnot(&available_cpus, &available_cpus, cpu_isolated_mask);
+	/* keep affinity first when conflict with isolation */
+	if (cpumask_intersects(cpu_online_mask, &available_cpus))
+		affinity = &available_cpus;
+#endif
+
 	if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
+#ifdef CONFIG_HISI_CPU_ISOLATION
+		/*
+		 * The order of preference for selecting a fallback CPU is
+		 *
+		 * (1) online and un-isolated CPU from default affinity
+		 * (2) online and un-isolated CPU
+		 * (3) online CPU
+		 */
+		cpumask_andnot(&available_cpus, cpu_online_mask,
+			       cpu_isolated_mask);
+		affinity = &available_cpus;
+
+		if (cpumask_intersects(&available_cpus, irq_default_affinity))
+			cpumask_and(&available_cpus, &available_cpus,
+				    irq_default_affinity);
+		else if (cpumask_empty(&available_cpus))
+			affinity = cpu_online_mask;
+#else
 		affinity = cpu_online_mask;
+#endif
+
 		ret = true;
 	}
 

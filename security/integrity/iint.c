@@ -32,7 +32,7 @@ static struct kmem_cache *iint_cache __read_mostly;
  */
 static struct integrity_iint_cache *__integrity_iint_find(struct inode *inode)
 {
-	struct integrity_iint_cache *iint;
+	struct integrity_iint_cache *iint = NULL;
 	struct rb_node *n = integrity_iint_tree.rb_node;
 
 	while (n) {

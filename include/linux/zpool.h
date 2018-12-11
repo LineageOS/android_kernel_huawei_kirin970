@@ -17,6 +17,11 @@ struct zpool_ops {
 	int (*evict)(struct zpool *pool, unsigned long handle);
 };
 
+struct zpool_stats {
+	/* How many pages were migrated (freed) */
+	unsigned long pages_compacted;
+};
+
 /*
  * Control how a handle is mapped.  It will be ignored if the
  * implementation does not support it.  Its use is optional.
@@ -58,6 +63,10 @@ void *zpool_map_handle(struct zpool *pool, unsigned long handle,
 
 void zpool_unmap_handle(struct zpool *pool, unsigned long handle);
 
+int zpool_compact(struct zpool *pool, unsigned long *compacted);
+
+void zpool_stats(struct zpool *pool, struct zpool_stats *zstats);
+
 u64 zpool_get_total_size(struct zpool *pool);
 
 
@@ -72,6 +81,8 @@ u64 zpool_get_total_size(struct zpool *pool);
  * @shrink:	shrink the pool.
  * @map:	map a handle.
  * @unmap:	unmap a handle.
+ * @compact:	try to run compaction for the pool
+ * @stats:	get statistics for the pool
  * @total_size:	get total size of a pool.
  *
  * This is created by a zpool implementation and registered
@@ -100,11 +111,15 @@ struct zpool_driver {
 				enum zpool_mapmode mm);
 	void (*unmap)(void *pool, unsigned long handle);
 
+	int (*compact)(void *pool, unsigned long *compacted);
+	void (*stats)(void *pool, struct zpool_stats *stats);
+
 	u64 (*total_size)(void *pool);
 };
 
 void zpool_register_driver(struct zpool_driver *driver);
 
 int zpool_unregister_driver(struct zpool_driver *driver);
+struct zpool_driver *zpool_get_driver(const char *type);
 
 #endif

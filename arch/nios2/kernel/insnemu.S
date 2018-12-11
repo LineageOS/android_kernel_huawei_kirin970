@@ -224,42 +224,7 @@ ENTRY(instruction_trap)
 	bne r7, zero, multiply
 
 
-	/* DIVISION
-	*
-	* Divide an unsigned dividend by an unsigned divisor using
-	* a shift-and-subtract algorithm.  The example below shows
-	* 43 div 7 = 6 for 8-bit integers.  This classic algorithm uses a
-	* single register to store both the dividend and the quotient,
-	* allowing both values to be shifted with a single instruction.
-	*
-	*                               remainder dividend:quotient
-	*                               --------- -----------------
-	*   initialize                   00000000     00101011:
-	*   shift                        00000000     0101011:_
-	*   remainder >= divisor? no     00000000     0101011:0
-	*   shift                        00000000     101011:0_
-	*   remainder >= divisor? no     00000000     101011:00
-	*   shift                        00000001     01011:00_
-	*   remainder >= divisor? no     00000001     01011:000
-	*   shift                        00000010     1011:000_
-	*   remainder >= divisor? no     00000010     1011:0000
-	*   shift                        00000101     011:0000_
-	*   remainder >= divisor? no     00000101     011:00000
-	*   shift                        00001010     11:00000_
-	*   remainder >= divisor? yes    00001010     11:000001
-	*       remainder -= divisor   - 00000111
-	*                              ----------
-	*                                00000011     11:000001
-	*   shift                        00000111     1:000001_
-	*   remainder >= divisor? yes    00000111     1:0000011
-	*       remainder -= divisor   - 00000111
-	*                              ----------
-	*                                00000000     1:0000011
-	*   shift                        00000001     :0000011_
-	*   remainder >= divisor? no     00000001     :00000110
-	*
-	* The quotient is 00000110.
-	*/
+	
 
 divide:
 	/*

@@ -469,7 +469,6 @@ struct cw1200_common;
 /* 4.26 SetUpasdInformation */
 #define WSM_MIB_ID_SET_UAPSD_INFORMATION	0x1013
 
-/* 4.27 SetAutoCalibrationMode  WBF00004073 */
 #define WSM_MIB_ID_SET_AUTO_CALIBRATION_MODE	0x1015
 
 /* 4.28 SetTxRateRetryPolicy */

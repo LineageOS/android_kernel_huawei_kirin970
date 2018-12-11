@@ -136,6 +136,10 @@ static void __uart_start(struct tty_struct *tty)
 
 	if (port && !uart_tx_stopped(port))
 		port->ops->start_tx(port);
+#ifdef CONFIG_HISI_AMBA_PL011
+	else
+		dev_info(port->dev, "%s: ttyAMA%d start transfer failed!\n", __func__, port->line);
+#endif
 }
 
 static void uart_start(struct tty_struct *tty)

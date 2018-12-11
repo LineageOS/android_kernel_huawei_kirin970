@@ -43,6 +43,13 @@ config PROC_VMCORE
         help
         Exports the dump image of crashed kernel in ELF format.
 
+config TASK_PROTECT_LRU
+	bool "protect lru of a process"
+	depends on !TRANSPARENT_HUGEPAGE && !HUGETLB_PAGE && !MEMCG && (ARM64 || X86_64)
+	default n
+	help
+	  Protect lru of task support. It's between normal lru and mlock,
+	  that means we will reclaim protect lru pages as late as possible.
 config PROC_SYSCTL
 	bool "Sysctl support (/proc/sys)" if EXPERT
 	depends on PROC_FS
@@ -81,6 +88,7 @@ config PROC_CHILDREN
 
 	  Say Y if you are running any user-space software which takes benefit from
 	  this interface. For example, rkt is such a piece of software.
+source "fs/proc/hisi/Kconfig"
 
 config PROC_UID
 	bool "Include /proc/uid/ files"

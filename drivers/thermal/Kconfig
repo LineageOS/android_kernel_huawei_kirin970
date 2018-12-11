@@ -419,6 +419,11 @@ config QCOM_SPMI_TEMP_ALARM
 	  real time die temperature if an ADC is present or an estimate of the
 	  temperature based upon the over temperature stage value.
 
+menu "Hisilicon thermal drivers"
+depends on ARCH_HISI
+source "drivers/thermal/hisi/Kconfig"
+endmenu
+
 config GENERIC_ADC_THERMAL
 	tristate "Generic ADC based thermal sensor"
 	depends on IIO

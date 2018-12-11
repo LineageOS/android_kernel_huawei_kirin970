@@ -113,12 +113,7 @@ static void __init xscale_cp_access_write(u32 value)
 		: "=r" (temp) : "r" (value));
 }
 
-/*
- * Detect whether we have a MAC coprocessor (40 bit register) or an
- * iWMMXt coprocessor (64 bit registers) by loading 00000100:00000000
- * into a coprocessor register and reading it back, and checking
- * whether the upper word survived intact.
- */
+
 static int __init cpu_has_iwmmxt(void)
 {
 	u32 lo;

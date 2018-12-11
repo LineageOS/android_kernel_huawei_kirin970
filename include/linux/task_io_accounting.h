@@ -14,6 +14,10 @@ struct task_io_accounting {
 	u64 rchar;
 	/*  bytes written */
 	u64 wchar;
+	/* bytes read from disk files */
+	u64 file_rchar;
+	/*  bytes written into disk files */
+	u64 file_wchar;
 	/* # of read syscalls */
 	u64 syscr;
 	/* # of write syscalls */

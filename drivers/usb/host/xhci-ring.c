@@ -71,6 +71,13 @@
 #include "xhci-trace.h"
 #include "xhci-mtk.h"
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+#include <linux/hisi/usb/hisi_usb.h>
+
+#include <huawei_platform/power/power_dsm.h>
+
+#endif
+
 /*
  * Returns zero if the TRB isn't in this segment, otherwise it returns the DMA
  * address of the TRB.
@@ -969,6 +976,17 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	usb_hc_died(xhci_to_hcd(xhci));
 	xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 			"xHCI host controller is dead.");
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+		xhci_warn(xhci, "arm usb stop endpoint command failed, use hifi usb\n");
+		hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+#ifdef CONFIG_HUAWEI_DSM
+		power_dsm_dmd_report_format(POWER_DSM_USB, DSM_USB_XHCI_CMD_TIMEOUT, "xhci command timeout\n");
+#endif
+	}
+#endif
 }
 
 
@@ -1298,23 +1316,57 @@ void xhci_handle_command_timeout(struct work_struct *work)
 	    (hw_ring_state & CMD_RING_RUNNING))  {
 		/* Prevent new doorbell, and start command abort */
 		xhci->cmd_ring_state = CMD_RING_STATE_ABORTED;
-		xhci_dbg(xhci, "Command timeout\n");
+		xhci_info(xhci, "Command timeout\n");
 		ret = xhci_abort_cmd_ring(xhci, flags);
 		if (unlikely(ret == -ESHUTDOWN)) {
 			xhci_err(xhci, "Abort command ring failed\n");
 			xhci_cleanup_command_queue(xhci);
 			spin_unlock_irqrestore(&xhci->lock, flags);
 			usb_hc_died(xhci_to_hcd(xhci)->primary_hcd);
-			xhci_dbg(xhci, "xHCI host controller is dead.\n");
+			xhci_info(xhci, "xHCI host controller is dead.\n");
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+			if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+					!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+				xhci_warn(xhci, "arm usb abnormal, use hifi usb\n");
+				hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+#ifdef CONFIG_HUAWEI_DSM
+				power_dsm_dmd_report_format(POWER_DSM_USB, DSM_USB_XHCI_CMD_TIMEOUT,
+						"xhci command timeout\n");
+#endif
+			}
+#endif
 			return;
 		}
 
 		goto time_out_completed;
 	}
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+		xhci_warn(xhci, "arm usb abnormal, use hifi usb\n");
+
+		xhci_cleanup_command_queue(xhci);
+		xhci->xhc_state |= XHCI_STATE_DYING;
+		/* Disable interrupts from the host controller and start halting it */
+		xhci_quiesce(xhci);
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		usb_hc_died(xhci_to_hcd(xhci)->primary_hcd);
+		xhci_info(xhci, "xHCI host controller is dead.\n");
+
+		hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+
+#ifdef CONFIG_HUAWEI_DSM
+		power_dsm_dmd_report_format(POWER_DSM_USB, DSM_USB_XHCI_CMD_TIMEOUT, "xhci command timeout\n");
+#endif
+		return;
+	}
+#endif
+
 	/* host removed. Bail out */
-	if (xhci->xhc_state & XHCI_STATE_REMOVING) {
+	if ((xhci->xhc_state & XHCI_STATE_REMOVING) ||
+		!(hw_ring_state & CMD_RING_RUNNING)) {
 		xhci_dbg(xhci, "host removed, ring start fail?\n");
 		xhci_cleanup_command_queue(xhci);
 
@@ -1322,7 +1374,7 @@ void xhci_handle_command_timeout(struct work_struct *work)
 	}
 
 	/* command timeout on stopped ring, ring can't be aborted */
-	xhci_dbg(xhci, "Command timeout on stopped ring\n");
+	xhci_info(xhci, "Command timeout on stopped ring\n");
 	xhci_handle_stopped_cmd_ring(xhci, xhci->current_cmd);
 
 time_out_completed:
@@ -1567,6 +1619,12 @@ static void handle_port_status(struct xhci_hcd *xhci,
 	hcd = xhci_to_hcd(xhci);
 	if ((major_revision == 0x03) != (hcd->speed >= HCD_USB3))
 		hcd = xhci->shared_hcd;
+
+	if (!hcd) {
+		xhci_warn(xhci, "hcd had been remove, ignore this event!\n");
+		bogus_port_status = true;
+		goto cleanup;
+	}
 
 	if (major_revision == 0) {
 		xhci_warn(xhci, "Event for port %u not in "
@@ -3378,6 +3436,7 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	u32 field, length_field, remainder;
 	struct urb_priv *urb_priv;
 	struct xhci_td *td;
+	int first_trb_giveback = 0;
 
 	ep_ring = xhci_urb_to_transfer_ring(xhci, urb);
 	if (!ep_ring)
@@ -3441,6 +3500,18 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		  /* Immediate data in pointer */
 		  field);
 
+#if defined(CONFIG_USB_DWC3_NOV) || defined(CONFIG_USB_DWC3_MAR)
+	if (urb->transfer_buffer_length > 0) {
+		xhci_dbg(xhci, "delay data stage\n");
+		first_trb_giveback = 1;
+		giveback_first_trb(xhci, slot_id, ep_index, 0,
+				start_cycle, start_trb);
+		wmb();
+
+		mdelay(2);
+	}
+#endif
+
 	/* If there's data, queue data TRBs */
 	/* Only set interrupt on short packet for IN endpoints */
 	if (usb_urb_dir_in(urb))
@@ -3470,6 +3541,21 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* Save the DMA address of the last TRB in the TD */
 	td->last_trb = ep_ring->enqueue;
 
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			(setup->bRequestType & USB_DIR_IN)) {
+		xhci_dbg(xhci, "delay status stage\n");
+		if (first_trb_giveback)
+			xhci_ring_ep_doorbell(xhci, slot_id, ep_index, 0);
+		else
+			giveback_first_trb(xhci, slot_id, ep_index, 0,
+					start_cycle, start_trb);
+		wmb();
+
+		mdelay(2);
+
+		first_trb_giveback = 1;
+	}
+
 	/* Queue status TRB - see Table 7 and sections 4.11.2.2 and 6.4.1.2.3 */
 	/* If the device sent data, the status stage is an OUT transfer */
 	if (urb->transfer_buffer_length > 0 && setup->bRequestType & USB_DIR_IN)
@@ -3483,8 +3569,12 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			/* Event on completion */
 			field | TRB_IOC | TRB_TYPE(TRB_STATUS) | ep_ring->cycle_state);
 
-	giveback_first_trb(xhci, slot_id, ep_index, 0,
-			start_cycle, start_trb);
+	if (first_trb_giveback)
+		xhci_ring_ep_doorbell(xhci, slot_id, ep_index, 0);
+	else
+		giveback_first_trb(xhci, slot_id, ep_index, 0,
+				start_cycle, start_trb);
+
 	return 0;
 }
 
@@ -3843,6 +3933,12 @@ int xhci_queue_isoc_tx_prepare(struct xhci_hcd *xhci, gfp_t mem_flags,
 	xdev = xhci->devs[slot_id];
 	xep = &xhci->devs[slot_id]->eps[ep_index];
 	ep_ring = xdev->eps[ep_index].ring;
+	if (!ep_ring) {
+		xhci_info(xhci, "%s: ep%d's ring is NULL\n",
+				__func__, ep_index);
+		return -EINVAL;
+	}
+
 	ep_ctx = xhci_get_ep_ctx(xhci, xdev->out_ctx, ep_index);
 
 	num_trbs = 0;

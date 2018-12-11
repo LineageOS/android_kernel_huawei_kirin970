@@ -19,6 +19,7 @@
 #include <linux/syscalls.h>
 #include <linux/file.h>
 #include <linux/mm_inline.h>
+#include <linux/hisi/pagecache_manage.h>
 
 #include "internal.h"
 
@@ -108,7 +109,7 @@ int read_cache_pages(struct address_space *mapping, struct list_head *pages,
 
 EXPORT_SYMBOL(read_cache_pages);
 
-static int read_pages(struct address_space *mapping, struct file *filp,
+int read_pages(struct address_space *mapping, struct file *filp,
 		struct list_head *pages, unsigned int nr_pages, gfp_t gfp)
 {
 	struct blk_plug plug;
@@ -163,6 +164,10 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 	if (isize == 0)
 		goto out;
 
+	pgcache_log_path(BIT_DO_PAGECACHE_READAHEAD_DUMP, &(filp->f_path),
+			"__do_page_cache_read, offset, %ld, nr_to_read, %ld, lookahead_size, %ld",
+			offset, nr_to_read, lookahead_size);
+
 	end_index = ((isize - 1) >> PAGE_SHIFT);
 
 	/*
@@ -183,6 +188,7 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 		page = __page_cache_alloc(gfp_mask);
 		if (!page)
 			break;
+
 		page->index = page_offset;
 		list_add(&page->lru, &page_pool);
 		if (page_idx == nr_to_read - lookahead_size)
@@ -247,6 +253,8 @@ static unsigned long get_init_ra_size(unsigned long size, unsigned long max)
 		newsize = newsize * 2;
 	else
 		newsize = max;
+
+	newsize = pch_shrink_read_pages(newsize);
 
 	return newsize;
 }
@@ -485,10 +493,16 @@ void page_cache_sync_readahead(struct address_space *mapping,
 
 	/* be dumb */
 	if (filp && (filp->f_mode & FMODE_RANDOM)) {
+		pgcache_log_path(BIT_PAGECACHE_SYNC_READAHEAD_DUMP, &(filp->f_path),
+				"pagecache sync read(FMODE_RANDOM), pg_offset, %ld, req_size, %ld",
+				offset, req_size);
 		force_page_cache_readahead(mapping, filp, offset, req_size);
 		return;
 	}
-
+	if(filp)
+		pgcache_log_path(BIT_PAGECACHE_SYNC_READAHEAD_DUMP, &(filp->f_path),
+				"pagecache sync readahead, pg_offset, %ld, req_size, %ld",
+				offset, req_size);
 	/* do read-ahead */
 	ondemand_readahead(mapping, ra, filp, false, offset, req_size);
 }
@@ -533,6 +547,12 @@ page_cache_async_readahead(struct address_space *mapping,
 	if (inode_read_congested(mapping->host))
 		return;
 
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+	filp->f_path.dentry->mapping_stat.async_read_times++;
+#endif
+	pgcache_log_path(BIT_PAGECACHE_ASYNC_READAHEAD_DUMP, &(filp->f_path),
+			"pagecache async readahead, pg_offset, %ld, req_size, %ld",
+			offset, req_size);
 	/* do read-ahead */
 	ondemand_readahead(mapping, ra, filp, true, offset, req_size);
 }
@@ -569,6 +589,10 @@ SYSCALL_DEFINE3(readahead, int, fd, loff_t, offset, size_t, count)
 			pgoff_t start = offset >> PAGE_SHIFT;
 			pgoff_t end = (offset + count - 1) >> PAGE_SHIFT;
 			unsigned long len = end - start + 1;
+
+			pgcache_log_path(BIT_READAHEAD_SYSCALL_DUMP, &(f.file->f_path),
+					"syscall readahead(fd:%d offset:%ld count:%d)",
+					fd, offset, count);
 			ret = do_readahead(mapping, f.file, start, len);
 		}
 		fdput(f);

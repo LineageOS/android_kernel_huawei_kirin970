@@ -22,6 +22,7 @@
 #include <asm/tlbflush.h>
 
 #include <trace/events/block.h>
+#include "blk.h"
 
 #define POOL_SIZE	64
 #define ISA_POOL_SIZE	16
@@ -220,6 +221,10 @@ bounce:
 	trace_block_bio_bounce(q, *bio_orig);
 
 	bio->bi_flags |= (1 << BIO_BOUNCED);
+
+#ifdef CONFIG_HISI_BLK
+	hisi_blk_queue_bounce(q, *bio_orig, bio);
+#endif
 
 	if (pool == page_pool) {
 		bio->bi_end_io = bounce_end_io_write;

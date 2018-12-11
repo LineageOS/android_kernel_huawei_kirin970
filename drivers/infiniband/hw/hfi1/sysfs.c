@@ -196,8 +196,7 @@ static const struct sysfs_ops port_cc_sysfs_ops = {
 };
 
 static struct attribute *port_cc_default_attributes[] = {
-	&cc_prescan_attr.attr,
-	NULL
+	&cc_prescan_attr.attr
 };
 
 static struct kobj_type port_cc_ktype = {

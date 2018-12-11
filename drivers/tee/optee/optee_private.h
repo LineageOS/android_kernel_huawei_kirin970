@@ -53,24 +53,36 @@ struct optee_wait_queue {
  * @ctx			the context of current connected supplicant.
  *			if !NULL the supplicant device is available for use,
  *			else busy
- * @mutex:		held while accessing content of this struct
- * @req_id:		current request id if supplicant is doing synchronous
- *			communication, else -1
- * @reqs:		queued request not yet retrieved by supplicant
- * @idr:		IDR holding all requests currently being processed
- *			by supplicant
- * @reqs_c:		completion used by supplicant when waiting for a
- *			request to be queued.
+ * @ctx_mutex:		held while accessing @ctx
+ * @func:		supplicant function id to call
+ * @ret:		call return value
+ * @num_params:		number of elements in @param
+ * @param:		parameters for @func
+ * @req_posted:		if true, a request has been posted to the supplicant
+ * @supp_next_send:	if true, next step is for supplicant to send response
+ * @thrd_mutex:		held by the thread doing a request to supplicant
+ * @supp_mutex:		held by supplicant while operating on this struct
+ * @data_to_supp:	supplicant is waiting on this for next request
+ * @data_from_supp:	requesting thread is waiting on this to get the result
  */
 struct optee_supp {
-	/* Serializes access to this struct */
-	struct mutex mutex;
 	struct tee_context *ctx;
+	/* Serializes access of ctx */
+	struct mutex ctx_mutex;
 
-	int req_id;
-	struct list_head reqs;
-	struct idr idr;
-	struct completion reqs_c;
+	u32 func;
+	u32 ret;
+	size_t num_params;
+	struct tee_param *param;
+
+	bool req_posted;
+	bool supp_next_send;
+	/* Serializes access to this struct for requesting thread */
+	struct mutex thrd_mutex;
+	/* Serializes access to this struct for supplicant threads */
+	struct mutex supp_mutex;
+	struct completion data_to_supp;
+	struct completion data_from_supp;
 };
 
 /**
@@ -84,8 +96,6 @@ struct optee_supp {
  * @supp:		supplicant synchronization struct for RPC to supplicant
  * @pool:		shared memory pool
  * @memremaped_shm	virtual address of memory in shared memory pool
- * @sec_caps:		secure world capabilities defined by
- *			OPTEE_SMC_SEC_CAP_* in optee_smc.h
  */
 struct optee {
 	struct tee_device *supp_teedev;
@@ -96,7 +106,6 @@ struct optee {
 	struct optee_supp supp;
 	struct tee_shm_pool *pool;
 	void *memremaped_shm;
-	u32 sec_caps;
 };
 
 struct optee_session {
@@ -121,16 +130,7 @@ struct optee_rpc_param {
 	u32	a7;
 };
 
-/* Holds context that is preserved during one STD call */
-struct optee_call_ctx {
-	/* information about pages list used in last allocation */
-	void *pages_list;
-	size_t num_entries;
-};
-
-void optee_handle_rpc(struct tee_context *ctx, struct optee_rpc_param *param,
-		      struct optee_call_ctx *call_ctx);
-void optee_rpc_finalize_call(struct optee_call_ctx *call_ctx);
+void optee_handle_rpc(struct tee_context *ctx, struct optee_rpc_param *param);
 
 void optee_wait_queue_init(struct optee_wait_queue *wq);
 void optee_wait_queue_exit(struct optee_wait_queue *wq);
@@ -142,7 +142,6 @@ int optee_supp_read(struct tee_context *ctx, void __user *buf, size_t len);
 int optee_supp_write(struct tee_context *ctx, void __user *buf, size_t len);
 void optee_supp_init(struct optee_supp *supp);
 void optee_supp_uninit(struct optee_supp *supp);
-void optee_supp_release(struct optee_supp *supp);
 
 int optee_supp_recv(struct tee_context *ctx, u32 *func, u32 *num_params,
 		    struct tee_param *param);
@@ -161,25 +160,10 @@ int optee_cancel_req(struct tee_context *ctx, u32 cancel_id, u32 session);
 void optee_enable_shm_cache(struct optee *optee);
 void optee_disable_shm_cache(struct optee *optee);
 
-int optee_shm_register(struct tee_context *ctx, struct tee_shm *shm,
-		       struct page **pages, size_t num_pages,
-		       unsigned long start);
-int optee_shm_unregister(struct tee_context *ctx, struct tee_shm *shm);
-
-int optee_shm_register_supp(struct tee_context *ctx, struct tee_shm *shm,
-			    struct page **pages, size_t num_pages,
-			    unsigned long start);
-int optee_shm_unregister_supp(struct tee_context *ctx, struct tee_shm *shm);
-
 int optee_from_msg_param(struct tee_param *params, size_t num_params,
 			 const struct optee_msg_param *msg_params);
 int optee_to_msg_param(struct optee_msg_param *msg_params, size_t num_params,
 		       const struct tee_param *params);
-
-u64 *optee_allocate_pages_list(size_t num_entries);
-void optee_free_pages_list(void *array, size_t num_entries);
-void optee_fill_pages_list(u64 *dst, struct page **pages, int num_pages,
-			   size_t page_offset);
 
 /*
  * Small helpers

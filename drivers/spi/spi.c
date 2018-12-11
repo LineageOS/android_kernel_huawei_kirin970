@@ -1153,8 +1153,15 @@ static void __spi_pump_messages(struct spi_master *master, bool in_kthread)
 			dev_err(&master->dev,
 				"failed to unprepare transfer hardware\n");
 		if (master->auto_runtime_pm) {
+#if defined CONFIG_HISI_SPI
+			mutex_lock(&master->msg_mutex);
 			pm_runtime_mark_last_busy(master->dev.parent);
 			pm_runtime_put_autosuspend(master->dev.parent);
+			mutex_unlock(&master->msg_mutex);
+#else
+			pm_runtime_mark_last_busy(master->dev.parent);
+			pm_runtime_put_autosuspend(master->dev.parent);
+#endif
 		}
 		trace_spi_master_idle(master);
 
@@ -1228,6 +1235,10 @@ static void __spi_pump_messages(struct spi_master *master, bool in_kthread)
 	if (ret) {
 		dev_err(&master->dev,
 			"failed to transfer one message from queue\n");
+#if defined CONFIG_HISI_SPI
+		master->cur_msg->status = ret;
+		spi_finalize_current_message(master);
+#endif
 		goto out;
 	}
 
@@ -1926,6 +1937,9 @@ int spi_register_master(struct spi_master *master)
 	spin_lock_init(&master->bus_lock_spinlock);
 	mutex_init(&master->bus_lock_mutex);
 	mutex_init(&master->io_mutex);
+#if defined CONFIG_HISI_SPI
+	mutex_init(&master->msg_mutex);
+#endif
 	master->bus_lock_flag = 0;
 	init_completion(&master->xfer_completion);
 	if (!master->max_dma_len)
@@ -2887,8 +2901,23 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 						       spi_sync_immediate);
 			__spi_pump_messages(master, false);
 		}
-
+#if defined CONFIG_HISI_SPI
+		if (spi_use_dma_transmode(message)) {
+			if (!wait_for_completion_timeout(&done, 3*HZ)) {
+				dev_err(&master->dev, "spi transfer message timeout\n");
+				WARN_ON(1);
+				show_spi_register(master);
+				show_dma_register(master, master->tx_chan_no);
+				show_dma_register(master, master->rx_chan_no);
+				pl022_resume_all(master);
+				message->status = -ETIMEDOUT;
+			}
+		} else {
+			wait_for_completion(&done);
+		}
+#else
 		wait_for_completion(&done);
+#endif
 		status = message->status;
 	}
 	message->context = NULL;

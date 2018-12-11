@@ -52,81 +52,7 @@
 #include <crypto/b128ops.h>
 #include <linux/slab.h>
 
-/* Comment by Rik:
- *
- * For some background on GF(2^128) see for example: 
- * http://csrc.nist.gov/groups/ST/toolkit/BCM/documents/proposedmodes/gcm/gcm-revised-spec.pdf 
- *
- * The elements of GF(2^128) := GF(2)[X]/(X^128-X^7-X^2-X^1-1) can
- * be mapped to computer memory in a variety of ways. Let's examine
- * three common cases.
- *
- * Take a look at the 16 binary octets below in memory order. The msb's
- * are left and the lsb's are right. char b[16] is an array and b[0] is
- * the first octet.
- *
- * 80000000 00000000 00000000 00000000 .... 00000000 00000000 00000000
- *   b[0]     b[1]     b[2]     b[3]          b[13]    b[14]    b[15]
- *
- * Every bit is a coefficient of some power of X. We can store the bits
- * in every byte in little-endian order and the bytes themselves also in
- * little endian order. I will call this lle (little-little-endian).
- * The above buffer represents the polynomial 1, and X^7+X^2+X^1+1 looks
- * like 11100001 00000000 .... 00000000 = { 0xE1, 0x00, }.
- * This format was originally implemented in gf128mul and is used
- * in GCM (Galois/Counter mode) and in ABL (Arbitrary Block Length).
- *
- * Another convention says: store the bits in bigendian order and the
- * bytes also. This is bbe (big-big-endian). Now the buffer above
- * represents X^127. X^7+X^2+X^1+1 looks like 00000000 .... 10000111,
- * b[15] = 0x87 and the rest is 0. LRW uses this convention and bbe
- * is partly implemented.
- *
- * Both of the above formats are easy to implement on big-endian
- * machines.
- *
- * EME (which is patent encumbered) uses the ble format (bits are stored
- * in big endian order and the bytes in little endian). The above buffer
- * represents X^7 in this case and the primitive polynomial is b[0] = 0x87.
- *
- * The common machine word-size is smaller than 128 bits, so to make
- * an efficient implementation we must split into machine word sizes.
- * This file uses one 32bit for the moment. Machine endianness comes into
- * play. The lle format in relation to machine endianness is discussed
- * below by the original author of gf128mul Dr Brian Gladman.
- *
- * Let's look at the bbe and ble format on a little endian machine.
- *
- * bbe on a little endian machine u32 x[4]:
- *
- *  MS            x[0]           LS  MS            x[1]		  LS
- *  ms   ls ms   ls ms   ls ms   ls  ms   ls ms   ls ms   ls ms   ls
- *  103..96 111.104 119.112 127.120  71...64 79...72 87...80 95...88
- *
- *  MS            x[2]           LS  MS            x[3]		  LS
- *  ms   ls ms   ls ms   ls ms   ls  ms   ls ms   ls ms   ls ms   ls
- *  39...32 47...40 55...48 63...56  07...00 15...08 23...16 31...24
- *
- * ble on a little endian machine
- *
- *  MS            x[0]           LS  MS            x[1]		  LS
- *  ms   ls ms   ls ms   ls ms   ls  ms   ls ms   ls ms   ls ms   ls
- *  31...24 23...16 15...08 07...00  63...56 55...48 47...40 39...32
- *
- *  MS            x[2]           LS  MS            x[3]		  LS
- *  ms   ls ms   ls ms   ls ms   ls  ms   ls ms   ls ms   ls ms   ls
- *  95...88 87...80 79...72 71...64  127.120 199.112 111.104 103..96
- *
- * Multiplications in GF(2^128) are mostly bit-shifts, so you see why
- * ble (and lbe also) are easier to implement on a little-endian
- * machine than on a big-endian machine. The converse holds for bbe
- * and lle.
- *
- * Note: to have good alignment, it seems to me that it is sufficient
- * to keep elements of GF(2^128) in type u64[2]. On 32-bit wordsize
- * machines this will automatically aligned to wordsize and on a 64-bit
- * machine also.
- */
+
 /*	Multiply a GF128 field element by x. Field elements are held in arrays
     of bytes in which field bits 8n..8n + 7 are held in byte[n], with lower
     indexed bits placed in the more numerically significant bit positions
@@ -177,7 +103,7 @@ void gf128mul_4k_bbe(be128 *a, struct gf128mul_4k *t);
 
 static inline void gf128mul_free_4k(struct gf128mul_4k *t)
 {
-	kfree(t);
+	kzfree(t);
 }
 
 

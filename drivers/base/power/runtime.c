@@ -12,7 +12,12 @@
 #include <linux/pm_runtime.h>
 #include <linux/pm_wakeirq.h>
 #include <trace/events/rpm.h>
+#include <linux/delay.h>
 #include "power.h"
+
+#ifdef CONFIG_ARCH_HISI
+#define LOCK_DELAY	(1UL)
+#endif
 
 typedef int (*pm_callback_t)(struct device *);
 
@@ -645,6 +650,11 @@ static int rpm_resume(struct device *dev, int rpmflags)
 			spin_unlock(&dev->power.lock);
 
 			cpu_relax();
+
+#ifdef CONFIG_ARCH_HISI
+			/* fix for spinlock, wait for 1 cycle(1/1.92M) */
+			__delay(LOCK_DELAY);
+#endif
 
 			spin_lock(&dev->power.lock);
 			goto repeat;

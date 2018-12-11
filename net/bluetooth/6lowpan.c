@@ -755,8 +755,7 @@ static void set_ip_addr_bits(u8 addr_type, u8 *addr)
 }
 
 static struct l2cap_chan *add_peer_chan(struct l2cap_chan *chan,
-					struct lowpan_btle_dev *dev,
-					bool new_netdev)
+					struct lowpan_btle_dev *dev)
 {
 	struct lowpan_peer *peer;
 
@@ -787,8 +786,7 @@ static struct l2cap_chan *add_peer_chan(struct l2cap_chan *chan,
 	spin_unlock(&devices_lock);
 
 	/* Notifying peers about us needs to be done without locks held */
-	if (new_netdev)
-		INIT_DELAYED_WORK(&dev->notify_peers, do_notify_peers);
+	INIT_DELAYED_WORK(&dev->notify_peers, do_notify_peers);
 	schedule_delayed_work(&dev->notify_peers, msecs_to_jiffies(100));
 
 	return peer->chan;
@@ -845,7 +843,6 @@ out:
 static inline void chan_ready_cb(struct l2cap_chan *chan)
 {
 	struct lowpan_btle_dev *dev;
-	bool new_netdev = false;
 
 	dev = lookup_dev(chan->conn);
 
@@ -856,13 +853,12 @@ static inline void chan_ready_cb(struct l2cap_chan *chan)
 			l2cap_chan_del(chan, -ENOENT);
 			return;
 		}
-		new_netdev = true;
 	}
 
 	if (!try_module_get(THIS_MODULE))
 		return;
 
-	add_peer_chan(chan, dev, new_netdev);
+	add_peer_chan(chan, dev);
 	ifup(dev->netdev);
 }
 

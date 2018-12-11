@@ -614,6 +614,7 @@ static int snd_card_setup(struct usb_configuration *c,
 static struct audio_source_instance *to_fi_audio_source(
 	const struct usb_function_instance *fi);
 
+#include "function-hisi/f_audio_source_hisi.c"
 
 /* audio function driver setup/binding */
 static int
@@ -671,8 +672,18 @@ audio_bind(struct usb_configuration *c, struct usb_function *f)
 		hs_as_in_ep_desc.bEndpointAddress =
 			fs_as_in_ep_desc.bEndpointAddress;
 
+#ifdef CONFIG_HISI_USB_FUNC_ADD_SS_DESC
+	if (gadget_is_superspeed(c->cdev->gadget)
+			|| gadget_is_superspeed_plus(c->cdev->gadget))
+		ss_as_in_ep_desc.bEndpointAddress =
+			fs_as_in_ep_desc.bEndpointAddress;
+#endif
+
 	f->fs_descriptors = fs_audio_desc;
 	f->hs_descriptors = hs_audio_desc;
+#ifdef CONFIG_HISI_USB_FUNC_ADD_SS_DESC
+	f->ss_descriptors = ss_audio_desc;
+#endif
 
 	for (i = 0, status = 0; i < IN_EP_REQ_COUNT && status == 0; i++) {
 		req = audio_request_new(ep, IN_EP_MAX_PACKET_SIZE);

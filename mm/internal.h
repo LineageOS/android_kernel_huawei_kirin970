@@ -60,6 +60,44 @@ static inline unsigned long ra_submit(struct file_ra_state *ra,
 					ra->start, ra->size, ra->async_size);
 }
 
+#ifdef CONFIG_HISI_PAGECACHE_HELPER
+unsigned long pch_shrink_read_pages(unsigned long nr);
+unsigned long pch_shrink_mmap_pages(unsigned long nr);
+unsigned long pch_shrink_mmap_async_pages(unsigned long nr);
+void pch_mmap_readextend(struct vm_area_struct *vma,
+				    struct file_ra_state *ra,
+				    struct file *file,
+				    pgoff_t offset);
+extern void pch_read_around(struct file_ra_state *ra,
+				   struct address_space *mapping,
+				   struct file *file,
+				   pgoff_t offset);
+#else
+static inline unsigned long pch_shrink_read_pages(unsigned long nr)
+{
+	return nr;
+}
+
+static inline unsigned long pch_shrink_mmap_pages(unsigned long nr)
+{
+	return nr;
+}
+
+static inline unsigned long pch_shrink_mmap_async_pages(unsigned long nr)
+{
+	return nr;
+}
+
+static inline void pch_mmap_readextend(struct vm_area_struct *vma,
+				    struct file_ra_state *ra,
+				    struct file *file,
+				    pgoff_t offset) {}
+
+static inline void pch_read_around(struct file_ra_state *ra,
+				   struct address_space *mapping,
+				   struct file *file, pgoff_t offset) {}
+#endif
+
 /*
  * Turn a non-refcounted page (->_refcount == 0) into refcounted with
  * a count of one.
@@ -177,6 +215,7 @@ extern int user_min_free_kbytes;
 struct compact_control {
 	struct list_head freepages;	/* List of free pages to migrate to */
 	struct list_head migratepages;	/* List of pages being migrated */
+	unsigned long nr_pinnedpages;	/* Number of pages pinned */
 	unsigned long nr_freepages;	/* Number of isolated free pages */
 	unsigned long nr_migratepages;	/* Number of pages to migrate */
 	unsigned long free_pfn;		/* isolate_freepages search base */
@@ -202,7 +241,8 @@ unsigned long
 isolate_migratepages_range(struct compact_control *cc,
 			   unsigned long low_pfn, unsigned long end_pfn);
 int find_suitable_fallback(struct free_area *area, unsigned int order,
-			int migratetype, bool only_stealable, bool *can_steal);
+			int migratetype, bool only_stealable, bool *can_steal,
+			gfp_t gfp_mask);
 
 #endif
 
@@ -471,6 +511,9 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_HIGH		0x20 /* __GFP_HIGH set */
 #define ALLOC_CPUSET		0x40 /* check for correct cpuset */
 #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+#define ALLOC_UNMOVABLE		0x800 /* migratetype is MIGRATE_UNMOVABLE */
+#endif
 
 enum ttu_flags;
 struct tlbflush_unmap_batch;

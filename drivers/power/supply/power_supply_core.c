@@ -20,6 +20,9 @@
 #include <linux/power_supply.h>
 #include <linux/thermal.h>
 #include "power_supply.h"
+#ifdef CONFIG_HISI_THERMAL_TRIP
+#include <linux/thermal.h>
+#endif
 
 /* exported for the APM Power driver, APM emulation */
 struct class *power_supply_class;
@@ -578,8 +581,107 @@ static int power_supply_read_temp(struct thermal_zone_device *tzd,
 	return ret;
 }
 
+#ifdef CONFIG_HISI_THERMAL_TRIP
+
+enum battery_trip_type {
+	BATTERY_TRIP_THROTTLING = 0,
+	BATTERY_TRIP_SHUTDOWN,
+	BATTERY_TRIP_BELOW_VR_MIN,
+	BATTERY_TRIP_NUM,
+};
+
+static int psy_battery_parse_trip(struct device_node *np, struct power_supply *power_supply)
+{
+	int ret;
+	s32 temp_throttling, temp_shutdown, temp_below_vr_min;
+	int i, mask = 0;
+
+	ret = of_property_read_s32(np, "temp_throttling", &temp_throttling);
+	if (ret) {
+		pr_err("temp_throttling node not found!\n");
+		temp_throttling = 0;
+	}
+	power_supply->temp_throttling = temp_throttling;
+
+	ret = of_property_read_s32(np, "temp_shutdown", &temp_shutdown);
+	if (ret) {
+		pr_err("temp_shutdown node not found!\n");
+		temp_shutdown = 0;
+	}
+	power_supply->temp_shutdown = temp_shutdown;
+
+	ret = of_property_read_s32(np, "temp_below_vr_min", &temp_below_vr_min);
+	if (ret) {
+		pr_err("temp_below_vr_min node not found!\n");
+		temp_below_vr_min = 0;
+	}
+	power_supply->temp_below_vr_min = temp_below_vr_min;
+
+	for (i = 0; i < BATTERY_TRIP_NUM; i++)
+		mask |= 1 << i; //lint !e701
+	power_supply->trip_mask = mask;
+	power_supply->trip_num = BATTERY_TRIP_NUM;
+
+	return ret;
+}
+
+static int battery_tz_get_trip_type(struct thermal_zone_device *thermal,
+				   int trip, enum thermal_trip_type *type)
+{
+	struct power_supply *power_supply = (struct power_supply *)thermal->devdata;
+
+	if (!power_supply || trip < 0 || !type)
+		return -EINVAL;
+	switch (trip) {
+	case BATTERY_TRIP_THROTTLING:
+		*type = THERMAL_TRIP_THROTTLING;
+		break;
+	case BATTERY_TRIP_SHUTDOWN:
+		*type = THERMAL_TRIP_SHUTDOWN;
+		break;
+	case BATTERY_TRIP_BELOW_VR_MIN:
+		*type = THERMAL_TRIP_BELOW_VR_MIN;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int battery_tz_get_trip_temp(struct thermal_zone_device *thermal,
+				   int trip, int *temp)
+{
+	struct power_supply *power_supply = (struct power_supply *)thermal->devdata;
+
+	if (!power_supply || trip < 0 || !temp)
+		return -EINVAL;
+
+	switch (trip) {
+	case BATTERY_TRIP_THROTTLING:
+		*temp = power_supply->temp_throttling;
+		break;
+	case BATTERY_TRIP_SHUTDOWN:
+		*temp = power_supply->temp_shutdown;
+		break;
+	case BATTERY_TRIP_BELOW_VR_MIN:
+		*temp = power_supply->temp_below_vr_min;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+#endif
+
 static struct thermal_zone_device_ops psy_tzd_ops = {
 	.get_temp = power_supply_read_temp,
+#ifdef CONFIG_HISI_THERMAL_TRIP
+	.get_trip_type = battery_tz_get_trip_type,
+	.get_trip_temp = battery_tz_get_trip_temp,
+#endif
 };
 
 static int psy_register_thermal(struct power_supply *psy)
@@ -592,8 +694,13 @@ static int psy_register_thermal(struct power_supply *psy)
 	/* Register battery zone device psy reports temperature */
 	for (i = 0; i < psy->desc->num_properties; i++) {
 		if (psy->desc->properties[i] == POWER_SUPPLY_PROP_TEMP) {
+#ifdef CONFIG_HISI_THERMAL_TRIP
+			psy->tzd = thermal_zone_device_register(psy->desc->name,
+					psy->trip_num, psy->trip_mask, psy, &psy_tzd_ops, NULL, 0, 0);
+#else
 			psy->tzd = thermal_zone_device_register(psy->desc->name,
 					0, 0, psy, &psy_tzd_ops, NULL, 0, 0);
+#endif
 			return PTR_ERR_OR_ZERO(psy->tzd);
 		}
 	}
@@ -741,6 +848,10 @@ __power_supply_register(struct device *parent,
 		psy->of_node = cfg->of_node;
 		psy->supplied_to = cfg->supplied_to;
 		psy->num_supplicants = cfg->num_supplicants;
+#ifdef CONFIG_HISI_THERMAL_TRIP
+		if (parent)
+			psy_battery_parse_trip(parent->of_node, psy);
+#endif
 	}
 
 	rc = dev_set_name(dev, "%s", desc->name);

@@ -211,3 +211,16 @@ obj-$(CONFIG_INTEL_SOC_PMIC)	+= intel-soc-pmic.o
 obj-$(CONFIG_MFD_MT6397)	+= mt6397-core.o
 
 obj-$(CONFIG_MFD_ALTERA_A10SR)	+= altera-a10sr.o
+obj-$(CONFIG_HISI_PMIC)		 += hisi_pmic.o
+obj-$(CONFIG_HISI_PMIC_PMU_SPMI)		 += hisi_pmic_spmi.o
+obj-y += hisi_pmic_dcxo.o
+obj-$(CONFIG_HISI_6423_PMIC_PMU_SPMI)         += hisi_6423_pmic_spmi.o
+obj-$(CONFIG_HISI_PMIC_MNTN)     += hisi_pmic_mntn.o
+obj-$(CONFIG_HISI_PMIC_MNTN_SPMI)     += hisi_pmic_mntn_spmi.o
+obj-$(CONFIG_HISI_IP_CORE)		+= hisi_kirin950_core.o
+obj-$(CONFIG_HISI_IP_PMIC)		+= hisi_ip_pmic.o
+obj-$(CONFIG_MFD_HISI_IP_CORE)		+= hisi_ip_core.o
+obj-$(CONFIG_HISI_FREQ_AUTODOWN)		+= hisi_freq_autodown.o
+obj-$(CONFIG_HISI_CHARGER_POWER)     += hisi_charger_power.o
+obj-$(CONFIG_HISI_VBAT_DROP_PRT)     += hisi_vbat_drop_protect.o
+EXTRA_CFLAGS += -Idrivers/hisi/tzdriver/libhwsecurec/

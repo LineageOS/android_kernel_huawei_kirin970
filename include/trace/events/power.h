@@ -11,6 +11,31 @@
 
 #define TPS(x)  tracepoint_string(x)
 
+TRACE_EVENT(cpufreq_policy_update,
+
+	TP_PROTO(struct task_struct *p, unsigned int min, unsigned int max),
+
+	TP_ARGS(p, min, max),
+
+	TP_STRUCT__entry(
+		__array(	char,	comm,	TASK_COMM_LEN	)
+		__field(	pid_t,	pid			)
+		__field(	unsigned int,	min		)
+		__field(	unsigned int,	max		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, p->comm, TASK_COMM_LEN);
+		__entry->pid		= p->pid;
+		__entry->min		= min;
+		__entry->max		= max;
+	),
+
+	TP_printk("comm=%s pid=%d min=%u max=%u",
+		  __entry->comm, __entry->pid,
+		  __entry->min, __entry->max)
+);
+
 DECLARE_EVENT_CLASS(cpu,
 
 	TP_PROTO(unsigned int state, unsigned int cpu_id),
@@ -554,6 +579,112 @@ DEFINE_EVENT(dev_pm_qos_request, dev_pm_qos_remove_request,
 
 	TP_ARGS(name, type, new_value)
 );
+
+#ifdef CONFIG_DEVFREQ_GOV_MEMLAT
+TRACE_EVENT(memlat_dev_meas,
+
+	TP_PROTO(const char *name, unsigned int dev_id, unsigned long inst,
+		 unsigned long mem, unsigned long freq, unsigned int ratio),
+
+	TP_ARGS(name, dev_id, inst, mem, freq, ratio),
+
+	TP_STRUCT__entry(
+		__string(name, name)
+		__field(unsigned int, dev_id)
+		__field(unsigned long, inst)
+		__field(unsigned long, mem)
+		__field(unsigned long, freq)
+		__field(unsigned int, ratio)
+	),
+
+	TP_fast_assign(
+		__assign_str(name, name);
+		__entry->dev_id = dev_id;
+		__entry->inst = inst;
+		__entry->mem = mem;
+		__entry->freq = freq;
+		__entry->ratio = ratio;
+	),
+
+	TP_printk("dev:%s id=%u inst=%lu mem=%lu freq=%lu ratio=%u",
+		__get_str(name),
+		__entry->dev_id,
+		__entry->inst,
+		__entry->mem,
+		__entry->freq,
+		__entry->ratio)
+);
+
+TRACE_EVENT(memlat_dev_update,
+
+	TP_PROTO(const char *name, unsigned int dev_id, unsigned long inst,
+		 unsigned long mem, unsigned long freq, unsigned long vote),
+
+	TP_ARGS(name, dev_id, inst, mem, freq, vote),
+
+	TP_STRUCT__entry(
+		__string(name, name)
+		__field(unsigned int, dev_id)
+		__field(unsigned long, inst)
+		__field(unsigned long, mem)
+		__field(unsigned long, freq)
+		__field(unsigned long, vote)
+	),
+
+	TP_fast_assign(
+		__assign_str(name, name);
+		__entry->dev_id = dev_id;
+		__entry->inst = inst;
+		__entry->mem = mem;
+		__entry->freq = freq;
+		__entry->vote = vote;
+	),
+
+	TP_printk("dev:%s id=%u inst=%lu mem=%lu freq=%lu vote=%lu",
+		__get_str(name),
+		__entry->dev_id,
+		__entry->inst,
+		__entry->mem,
+		__entry->freq,
+		__entry->vote)
+);
+#endif
+
+#ifdef CONFIG_HISI_DEVFREQ_DEVBW
+TRACE_EVENT(memlat_set_dev_freq,
+
+	TP_PROTO(const char *name, const char *reason, int cpu,
+		 unsigned long min_core_freq, unsigned long cpu_freq, unsigned long new_ddr_freq),
+
+	TP_ARGS(name, reason, cpu, min_core_freq, cpu_freq, new_ddr_freq),
+
+	TP_STRUCT__entry(
+		__string(name, name)
+		__string(reason, reason)
+		__field(int, cpu)
+		__field(unsigned long, min_core_freq)
+		__field(unsigned long, cpu_freq)
+		__field(unsigned long, new_ddr_freq)
+	),
+
+	TP_fast_assign(
+		__assign_str(name, name);
+		__assign_str(reason, reason);
+		__entry->cpu = cpu;
+		__entry->min_core_freq = min_core_freq;
+		__entry->cpu_freq = cpu_freq;
+		__entry->new_ddr_freq = new_ddr_freq;
+	),
+
+	TP_printk("dev:%s reason=%s  cpu=%d min_core_freq=%lu cpu_freq=%lu new_ddr_freq=%lu",
+		__get_str(name),
+		__get_str(reason),
+		__entry->cpu,
+		__entry->min_core_freq,
+		__entry->cpu_freq,
+		__entry->new_ddr_freq)
+);
+#endif
 #endif /* _TRACE_POWER_H */
 
 /* This part must be outside protection */

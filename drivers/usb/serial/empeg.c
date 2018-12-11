@@ -82,15 +82,7 @@ static void empeg_init_termios(struct tty_struct *tty)
 {
 	struct ktermios *termios = &tty->termios;
 
-	/*
-	 * The empeg-car player wants these particular tty settings.
-	 * You could, for example, change the baud rate, however the
-	 * player only supports 115200 (currently), so there is really
-	 * no point in support for changes to the tty settings.
-	 * (at least for now)
-	 *
-	 * The default requirements for this device are:
-	 */
+	
 	termios->c_iflag
 		&= ~(IGNBRK	/* disable ignore break */
 		| BRKINT	/* disable break causes interrupt */

@@ -26,6 +26,12 @@
 
 #include "clk.h"
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+#include <linux/uaccess.h>
+#include <linux/io.h>
+#include "hisi-clk-debug.h"
+#endif
+
 static DEFINE_SPINLOCK(enable_lock);
 static DEFINE_MUTEX(prepare_lock);
 
@@ -39,53 +45,13 @@ static HLIST_HEAD(clk_root_list);
 static HLIST_HEAD(clk_orphan_list);
 static LIST_HEAD(clk_notifier_list);
 
-/***    private data structures    ***/
-
-struct clk_core {
-	const char		*name;
-	const struct clk_ops	*ops;
-	struct clk_hw		*hw;
-	struct module		*owner;
-	struct clk_core		*parent;
-	const char		**parent_names;
-	struct clk_core		**parents;
-	u8			num_parents;
-	u8			new_parent_index;
-	unsigned long		rate;
-	unsigned long		req_rate;
-	unsigned long		new_rate;
-	struct clk_core		*new_parent;
-	struct clk_core		*new_child;
-	unsigned long		flags;
-	bool			orphan;
-	unsigned int		enable_count;
-	unsigned int		prepare_count;
-	unsigned long		min_rate;
-	unsigned long		max_rate;
-	unsigned long		accuracy;
-	int			phase;
-	struct hlist_head	children;
-	struct hlist_node	child_node;
-	struct hlist_head	clks;
-	unsigned int		notifier_count;
-#ifdef CONFIG_DEBUG_FS
-	struct dentry		*dentry;
-	struct hlist_node	debug_node;
-#endif
-	struct kref		ref;
-};
-
 #define CREATE_TRACE_POINTS
 #include <trace/events/clk.h>
 
-struct clk {
-	struct clk_core	*core;
-	const char *dev_id;
-	const char *con_id;
-	unsigned long min_rate;
-	unsigned long max_rate;
-	struct hlist_node clks_node;
-};
+#ifdef CONFIG_HISI_CLK_DEBUG
+LIST_HEAD(clocks);
+static DEFINE_MUTEX(clock_list_lock);
+#endif
 
 /***           locking             ***/
 static void clk_prepare_lock(void)
@@ -160,8 +126,11 @@ static bool clk_core_is_prepared(struct clk_core *core)
 	return core->ops->is_prepared(core->hw);
 }
 
-static bool clk_core_is_enabled(struct clk_core *core)
+bool clk_core_is_enabled(struct clk_core *core)
 {
+	if(!core)
+		return false;
+
 	/*
 	 * .is_enabled is only mandatory for clocks that gate
 	 * fall back to software usage counter if .is_enabled is missing
@@ -171,8 +140,19 @@ static bool clk_core_is_enabled(struct clk_core *core)
 
 	return core->ops->is_enabled(core->hw);
 }
+EXPORT_SYMBOL_GPL(clk_core_is_enabled);
 
 /***    helper functions   ***/
+
+struct clk *__clk_get_parent(struct clk *clk)
+{
+	if (!clk)
+		return NULL;
+
+	/* TODO: Create a per-user clk and change callers to call clk_put */
+	return !clk->core->parent ? NULL : clk->core->parent->hw->clk;
+}
+EXPORT_SYMBOL_GPL(__clk_get_parent);
 
 const char *__clk_get_name(const struct clk *clk)
 {
@@ -260,6 +240,19 @@ static struct clk_core *clk_core_get_parent_by_index(struct clk_core *core,
 	return core->parents[index];
 }
 
+struct clk *clk_get_parent_by_index(struct clk *clk, u8 index)
+{
+	struct clk_core *parent;
+
+	if (!clk)
+		return NULL;
+
+	parent = clk_core_get_parent_by_index(clk->core, index);
+
+	return !parent ? NULL : parent->hw->clk;
+}
+EXPORT_SYMBOL_GPL(clk_get_parent_by_index);
+
 struct clk_hw *
 clk_hw_get_parent_by_index(const struct clk_hw *hw, unsigned int index)
 {
@@ -275,6 +268,43 @@ unsigned int __clk_get_enable_count(struct clk *clk)
 {
 	return !clk ? 0 : clk->core->enable_count;
 }
+EXPORT_SYMBOL_GPL(__clk_get_enable_count);
+
+#ifdef CONFIG_HISI_CLK
+unsigned int clk_get_enable_count(struct clk *clk)
+{
+	unsigned int ret;
+
+	clk_prepare_lock();
+	ret = __clk_get_enable_count(clk);
+	clk_prepare_unlock();
+	return ret;
+}
+EXPORT_SYMBOL_GPL(clk_get_enable_count);
+
+int __clk_get_source(struct clk *clk)
+{
+	if (clk->core->ops->get_source) {
+		return clk->core->ops->get_source(clk->core->hw);
+	} else {
+		return -1;
+	}
+}
+EXPORT_SYMBOL_GPL(__clk_get_source);
+
+int clk_get_source(struct clk *clk)
+{
+	int ret;
+
+	if (!clk)
+		return -EINVAL;
+	clk_prepare_lock();
+	ret = __clk_get_source(clk);
+	clk_prepare_unlock();
+	return ret;
+}
+EXPORT_SYMBOL_GPL(clk_get_source);
+#endif
 
 static unsigned long clk_core_get_rate_nolock(struct clk_core *core)
 {
@@ -302,6 +332,15 @@ unsigned long clk_hw_get_rate(const struct clk_hw *hw)
 	return clk_core_get_rate_nolock(hw->core);
 }
 EXPORT_SYMBOL_GPL(clk_hw_get_rate);
+
+unsigned long __clk_get_rate(struct clk *clk)
+{
+	if (!clk)
+		return 0;
+
+	return clk_core_get_rate_nolock(clk->core);
+}
+EXPORT_SYMBOL_GPL(__clk_get_rate);
 
 static unsigned long __clk_get_accuracy(struct clk_core *core)
 {
@@ -466,7 +505,7 @@ EXPORT_SYMBOL_GPL(__clk_mux_determine_rate_closest);
 
 /***        clk api        ***/
 
-static void clk_core_unprepare(struct clk_core *core)
+void clk_core_unprepare(struct clk_core *core)
 {
 	lockdep_assert_held(&prepare_lock);
 
@@ -492,6 +531,7 @@ static void clk_core_unprepare(struct clk_core *core)
 	trace_clk_unprepare_complete(core);
 	clk_core_unprepare(core->parent);
 }
+EXPORT_SYMBOL_GPL(clk_core_unprepare);
 
 static void clk_core_unprepare_lock(struct clk_core *core)
 {
@@ -520,7 +560,7 @@ void clk_unprepare(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(clk_unprepare);
 
-static int clk_core_prepare(struct clk_core *core)
+int clk_core_prepare(struct clk_core *core)
 {
 	int ret = 0;
 
@@ -551,6 +591,7 @@ static int clk_core_prepare(struct clk_core *core)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(clk_core_prepare);
 
 static int clk_core_prepare_lock(struct clk_core *core)
 {
@@ -616,8 +657,20 @@ static void clk_core_disable_lock(struct clk_core *core)
 
 	flags = clk_enable_lock();
 	clk_core_disable(core);
+#ifdef CONFIG_HISI_CLK_TRACE
+        track_clk_enable(core->hw->clk);
+#endif
 	clk_enable_unlock(flags);
 }
+
+void __clk_disable(struct clk *clk)
+{
+	if (!clk)
+		return;
+
+	clk_core_disable(clk->core);
+}
+EXPORT_SYMBOL_GPL(__clk_disable);
 
 /**
  * clk_disable - gate a clock
@@ -679,13 +732,23 @@ static int clk_core_enable_lock(struct clk_core *core)
 {
 	unsigned long flags;
 	int ret;
-
 	flags = clk_enable_lock();
 	ret = clk_core_enable(core);
+#ifdef CONFIG_HISI_CLK_TRACE
+        track_clk_enable(core->hw->clk);
+#endif
 	clk_enable_unlock(flags);
-
 	return ret;
 }
+
+int __clk_enable(struct clk *clk)
+{
+	if (!clk)
+		return 0;
+
+	return clk_core_enable(clk->core);
+}
+EXPORT_SYMBOL_GPL(__clk_enable);
 
 /**
  * clk_enable - ungate a clock
@@ -833,6 +896,52 @@ static int clk_disable_unused(void)
 }
 late_initcall_sync(clk_disable_unused);
 
+#ifdef CONFIG_HISI_CLK
+/*
+ *clk_remote_prepare_enable-ungate a remote clock, in uncommon use
+ *@clk: the clk being ungated
+ *
+ *one clock or multi-clock in the tree that contained in the other processor,
+ * and need to wait the remote clock to be stabled
+ */
+int clk_remote_prepare_enable(struct clk *clk)
+{
+	int ret;
+
+	clk_prepare_lock();
+	ret = clk_core_prepare(clk->core);
+	if (ret) {
+		clk_prepare_unlock();
+		return ret;
+	}
+	if (!clk) {
+		ret = 0;
+	} else {
+		ret = clk_core_enable(clk->core);
+	}
+	if (ret)
+		clk_core_unprepare(clk->core);
+	clk_prepare_unlock();
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(clk_remote_prepare_enable);
+
+/*
+ * clk_remote_disable_unprepare - gate a remotee clock, in uncommon use1132
+ * @clk: the clk being gated1133
+ */
+void clk_remote_disable_unprepare(struct clk *clk)
+{
+	clk_prepare_lock();
+	if (clk)
+		clk_core_disable(clk->core);
+	clk_core_unprepare(clk->core);
+	clk_prepare_unlock();
+}
+EXPORT_SYMBOL_GPL(clk_remote_disable_unprepare);
+#endif
+
 static int clk_core_round_rate_nolock(struct clk_core *core,
 				      struct clk_rate_request *req)
 {
@@ -904,6 +1013,31 @@ unsigned long clk_hw_round_rate(struct clk_hw *hw, unsigned long rate)
 	return req.rate;
 }
 EXPORT_SYMBOL_GPL(clk_hw_round_rate);
+
+ /**
+  * __clk_round_rate - round the given rate for a clk
+  * @clk: round the rate of this clock
+  * @rate: the rate which is to be rounded
+  *
+  * Caller must hold prepare_lock.  Useful for clk_ops such as .set_rate
+  */
+unsigned long __clk_round_rate(struct clk *clk, unsigned long rate)
+{
+	struct clk_rate_request req;
+	int ret;
+
+	if (!clk)
+		return 0;
+
+	clk_core_get_boundaries(clk->core, &req.min_rate, &req.max_rate);
+	req.rate = rate;
+
+	ret = clk_core_round_rate_nolock(clk->core, &req);
+	if (ret)
+		return ret;
+
+	return req.rate;
+}
 
 /**
  * clk_round_rate - round the given rate for a clk
@@ -1079,7 +1213,7 @@ static void __clk_recalc_rates(struct clk_core *core, unsigned long msg)
 		__clk_recalc_rates(child, msg);
 }
 
-static unsigned long clk_core_get_rate(struct clk_core *core)
+unsigned long clk_core_get_rate(struct clk_core *core)
 {
 	unsigned long rate;
 
@@ -1093,7 +1227,7 @@ static unsigned long clk_core_get_rate(struct clk_core *core)
 
 	return rate;
 }
-
+EXPORT_SYMBOL_GPL(clk_core_get_rate);
 /**
  * clk_get_rate - return the rate of clk
  * @clk: the clk whose rate is being returned
@@ -1558,6 +1692,9 @@ static void clk_change_rate(struct clk_core *core)
 		clk_change_rate(core->new_child);
 }
 
+#ifdef CONFIG_HISI_CLK
+extern int IS_FPGA(void);
+#endif
 static int clk_core_set_rate_nolock(struct clk_core *core,
 				    unsigned long req_rate)
 {
@@ -1570,7 +1707,10 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 	/* bail early if nothing to do */
 	if (rate == clk_core_get_rate_nolock(core))
 		return 0;
-
+#ifdef CONFIG_HISI_CLK
+	if (IS_FPGA() && (!(core->flags & CLK_IS_ROOT)))
+		return 0;
+#endif
 	if ((core->flags & CLK_SET_RATE_GATE) && core->prepare_count)
 		return -EBUSY;
 
@@ -1595,6 +1735,17 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 
 	return 0;
 }
+
+#ifdef CONFIG_HISI_CLK
+int clk_set_rate_nolock(struct clk *clk, unsigned long rate)
+{
+	if (!clk)
+		return 0;
+
+	return clk_core_set_rate_nolock(clk->core, rate);
+}
+EXPORT_SYMBOL_GPL(clk_set_rate_nolock);
+#endif
 
 /**
  * clk_set_rate - specify a new rate for clk
@@ -1628,7 +1779,9 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	clk_prepare_lock();
 
 	ret = clk_core_set_rate_nolock(clk->core, rate);
-
+#ifdef CONFIG_HISI_CLK_TRACE
+	track_clk_set_freq(clk, rate);
+#endif
 	clk_prepare_unlock();
 
 	return ret;
@@ -1929,6 +2082,9 @@ static int clk_core_get_phase(struct clk_core *core)
 	int ret;
 
 	clk_prepare_lock();
+	/* Always try to update cached phase if possible */
+	if (core->ops->get_phase)
+		core->phase = core->ops->get_phase(core->hw);
 	ret = core->phase;
 	clk_prepare_unlock();
 
@@ -2142,8 +2298,12 @@ static int clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 
 	core->dentry = d;
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+	d = debugfs_create_clkfs(core);
+#else
 	d = debugfs_create_u32("clk_rate", S_IRUGO, core->dentry,
 			(u32 *)&core->rate);
+#endif
 	if (!d)
 		goto err_out;
 
@@ -2286,6 +2446,10 @@ static int __init clk_debug_init(void)
 				&orphan_list, &clk_dump_fops);
 	if (!d)
 		return -ENOMEM;
+
+#ifdef CONFIG_HISI_CLK_DEBUG
+	hisi_clk_debug_init();
+#endif
 
 	mutex_lock(&clk_debug_lock);
 	hlist_for_each_entry(core, &clk_debug_list, debug_node)
@@ -2438,37 +2602,22 @@ static int __clk_core_init(struct clk_core *core)
 	core->rate = core->req_rate = rate;
 
 	/*
-	 * Enable CLK_IS_CRITICAL clocks so newly added critical clocks
-	 * don't get accidentally disabled when walking the orphan tree and
-	 * reparenting clocks
-	 */
-	if (core->flags & CLK_IS_CRITICAL) {
-		unsigned long flags;
-
-		clk_core_prepare(core);
-
-		flags = clk_enable_lock();
-		clk_core_enable(core);
-		clk_enable_unlock(flags);
-	}
-
-	/*
 	 * walk the list of orphan clocks and reparent any that newly finds a
 	 * parent.
 	 */
 	hlist_for_each_entry_safe(orphan, tmp2, &clk_orphan_list, child_node) {
 		struct clk_core *parent = __clk_init_parent(orphan);
+		unsigned long flags;
 
 		/*
-		 * We need to use __clk_set_parent_before() and _after() to
-		 * to properly migrate any prepare/enable count of the orphan
-		 * clock. This is important for CLK_IS_CRITICAL clocks, which
-		 * are enabled during init but might not have a parent yet.
+		 * we could call __clk_set_parent, but that would result in a
+		 * redundant call to the .set_rate op, if it exists
 		 */
 		if (parent) {
 			/* update the clk tree topology */
-			__clk_set_parent_before(orphan, parent);
-			__clk_set_parent_after(orphan, parent, NULL);
+			flags = clk_enable_lock();
+			clk_reparent(orphan, parent);
+			clk_enable_unlock(flags);
 			__clk_recalc_accuracies(orphan);
 			__clk_recalc_rates(orphan, 0);
 		}
@@ -2485,7 +2634,20 @@ static int __clk_core_init(struct clk_core *core)
 	if (core->ops->init)
 		core->ops->init(core->hw);
 
+	if (core->flags & CLK_IS_CRITICAL) {
+		unsigned long flags;
+
+		clk_core_prepare(core);
+
+		flags = clk_enable_lock();
+		clk_core_enable(core);
+		clk_enable_unlock(flags);
+	}
+
 	kref_init(&core->ref);
+#ifdef CONFIG_HISI_CLK_DEBUG
+	clk_list_add(core);
+#endif
 out:
 	clk_prepare_unlock();
 

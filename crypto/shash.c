@@ -57,18 +57,11 @@ int crypto_shash_setkey(struct crypto_shash *tfm, const u8 *key,
 {
 	struct shash_alg *shash = crypto_shash_alg(tfm);
 	unsigned long alignmask = crypto_shash_alignmask(tfm);
-	int err;
 
 	if ((unsigned long)key & alignmask)
-		err = shash_setkey_unaligned(tfm, key, keylen);
-	else
-		err = shash->setkey(tfm, key, keylen);
+		return shash_setkey_unaligned(tfm, key, keylen);
 
-	if (err)
-		return err;
-
-	crypto_shash_clear_flags(tfm, CRYPTO_TFM_NEED_KEY);
-	return 0;
+	return shash->setkey(tfm, key, keylen);
 }
 EXPORT_SYMBOL_GPL(crypto_shash_setkey);
 
@@ -186,9 +179,6 @@ int crypto_shash_digest(struct shash_desc *desc, const u8 *data,
 	struct crypto_shash *tfm = desc->tfm;
 	struct shash_alg *shash = crypto_shash_alg(tfm);
 	unsigned long alignmask = crypto_shash_alignmask(tfm);
-
-	if (crypto_shash_get_flags(tfm) & CRYPTO_TFM_NEED_KEY)
-		return -ENOKEY;
 
 	if (((unsigned long)data | (unsigned long)out) & alignmask)
 		return shash_digest_unaligned(desc, data, len, out);
@@ -369,8 +359,7 @@ int crypto_init_shash_ops_async(struct crypto_tfm *tfm)
 	crt->digest = shash_async_digest;
 	crt->setkey = shash_async_setkey;
 
-	crypto_ahash_set_flags(crt, crypto_shash_get_flags(shash) &
-				    CRYPTO_TFM_NEED_KEY);
+	crt->has_setkey = alg->setkey != shash_no_setkey;
 
 	if (alg->export)
 		crt->export = shash_async_export;
@@ -385,14 +374,8 @@ int crypto_init_shash_ops_async(struct crypto_tfm *tfm)
 static int crypto_shash_init_tfm(struct crypto_tfm *tfm)
 {
 	struct crypto_shash *hash = __crypto_shash_cast(tfm);
-	struct shash_alg *alg = crypto_shash_alg(hash);
 
-	hash->descsize = alg->descsize;
-
-	if (crypto_shash_alg_has_setkey(alg) &&
-	    !(alg->base.cra_flags & CRYPTO_ALG_OPTIONAL_KEY))
-		crypto_shash_set_flags(hash, CRYPTO_TFM_NEED_KEY);
-
+	hash->descsize = crypto_shash_alg(hash)->descsize;
 	return 0;
 }
 
@@ -555,6 +538,14 @@ void shash_free_instance(struct crypto_instance *inst)
 	kfree(shash_instance(inst));
 }
 EXPORT_SYMBOL_GPL(shash_free_instance);
+
+int crypto_grab_shash(struct crypto_shash_spawn *spawn,
+		      const char *name, u32 type, u32 mask)
+{
+	spawn->base.frontend = &crypto_shash_type;
+	return crypto_grab_spawn(&spawn->base, name, type, mask);
+}
+EXPORT_SYMBOL_GPL(crypto_grab_shash);
 
 int crypto_init_shash_spawn(struct crypto_shash_spawn *spawn,
 			    struct shash_alg *alg,

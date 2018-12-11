@@ -50,6 +50,7 @@ struct hwspinlock {
 	spinlock_t lock;
 	void *priv;
 };
+extern struct hwspinlock *hwspin_lock_lookup(unsigned int id);
 
 /**
  * struct hwspinlock_device - a device which usually spans numerous hwspinlocks

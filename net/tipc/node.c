@@ -1848,38 +1848,36 @@ int tipc_nl_node_get_link(struct sk_buff *skb, struct genl_info *info)
 
 	if (strcmp(name, tipc_bclink_name) == 0) {
 		err = tipc_nl_add_bc_link(net, &msg);
-		if (err)
-			goto err_free;
+		if (err) {
+			nlmsg_free(msg.skb);
+			return err;
+		}
 	} else {
 		int bearer_id;
 		struct tipc_node *node;
 		struct tipc_link *link;
 
 		node = tipc_node_find_by_name(net, name, &bearer_id);
-		if (!node) {
-			err = -EINVAL;
-			goto err_free;
-		}
+		if (!node)
+			return -EINVAL;
 
 		tipc_node_read_lock(node);
 		link = node->links[bearer_id].link;
 		if (!link) {
 			tipc_node_read_unlock(node);
-			err = -EINVAL;
-			goto err_free;
+			nlmsg_free(msg.skb);
+			return -EINVAL;
 		}
 
 		err = __tipc_nl_add_link(net, &msg, link, 0);
 		tipc_node_read_unlock(node);
-		if (err)
-			goto err_free;
+		if (err) {
+			nlmsg_free(msg.skb);
+			return err;
+		}
 	}
 
 	return genlmsg_reply(msg.skb, info);
-
-err_free:
-	nlmsg_free(msg.skb);
-	return err;
 }
 
 int tipc_nl_node_reset_link_stats(struct sk_buff *skb, struct genl_info *info)
@@ -2094,8 +2092,6 @@ int tipc_nl_node_get_monitor(struct sk_buff *skb, struct genl_info *info)
 	int err;
 
 	msg.skb = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
-	if (!msg.skb)
-		return -ENOMEM;
 	msg.portid = info->snd_portid;
 	msg.seq = info->snd_seq;
 

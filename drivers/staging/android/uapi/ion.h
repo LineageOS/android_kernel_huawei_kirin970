@@ -19,6 +19,7 @@
 
 #include <linux/ioctl.h>
 #include <linux/types.h>
+#include <linux/iommu.h>
 
 typedef int ion_user_handle_t;
 
@@ -40,11 +41,23 @@ enum ion_heap_type {
 	ION_HEAP_TYPE_CARVEOUT,
 	ION_HEAP_TYPE_CHUNK,
 	ION_HEAP_TYPE_DMA,
-	ION_HEAP_TYPE_CUSTOM, /*
-			       * must be last so device specific heaps always
-			       * are at the end of this enum
-			       */
+	ION_HEAP_TYPE_DMA_POOL,
+	ION_HEAP_TYPE_CPUDRAW,
+	ION_HEAP_TYPE_IOMMU,
+#ifdef CONFIG_ION_HISI_SECCM
+	ION_HEAP_TYPE_SECCM,
+#endif
+#ifdef CONFIG_ION_HISI_SECSG
+	ION_HEAP_TYPE_SECSG,
+#endif
+	ION_HEAP_TYPE_CUSTOM, /* must be last so device specific heaps always
+				 are at the end of this enum */
+	ION_HEAP_TYPE_RESERVED,
 };
+
+#define ION_HEAP_TYPE_DMA_POOL_MASK	(1 << ION_HEAP_TYPE_DMA_POOL)
+#define ION_HEAP_CPUDRAW_MASK		(1 << ION_HEAP_TYPE_CPUDRAW)
+#define ION_HEAP_TYPE_IOMMU_MASK	(1 << ION_HEAP_TYPE_IOMMU)
 
 #define ION_NUM_HEAP_IDS		(sizeof(unsigned int) * 8)
 
@@ -57,13 +70,24 @@ enum ion_heap_type {
  * mappings of this buffer should be cached, ion will do cache maintenance
  * when the buffer is mapped for dma
  */
-#define ION_FLAG_CACHED 1
+#define ION_FLAG_CACHED (0x1 << 0)
 
 /*
  * mappings of this buffer will created at mmap time, if this is set
  * caches must be managed manually
  */
-#define ION_FLAG_CACHED_NEEDS_SYNC 2
+#define ION_FLAG_CACHED_NEEDS_SYNC (0x1 << 1)
+#define ION_FLAG_NOT_ZERO_BUFFER (0x1 << 2)	 /* do not zero buffer*/
+
+#define ION_FLAG_SECURE_BUFFER (0x1 << 3)
+
+#define ION_FLAG_GRAPHIC_BUFFER (0x1 << 4)
+
+#define ION_FLAG_GRAPHIC_GPU_BUFFER (0x1 << 5)
+
+#define ION_FLAG_ALLOC_NOWARN_BUFFER (0x1 << 6)
+
+#define ION_FLAG_NO_SHRINK_BUFFER (0x1 << 7)
 
 /**
  * DOC: Ion Userspace API
@@ -232,5 +256,34 @@ struct ion_heap_query {
  */
 #define ION_IOC_HEAP_QUERY     _IOWR(ION_IOC_MAGIC, 8, \
 					struct ion_heap_query)
+/**
+ * struct ion_map_iommu_data - metadata passed between userspace for iommu mapping
+ * @handle:	the handle of buffer
+ * @format:	the format of iommu mapping
+ *
+ * Provided by userspace as an argument to the ioctl
+ */
+struct iommu_map_format;
+struct ion_map_iommu_data {
+	ion_user_handle_t handle;
+	struct iommu_map_format format;
+};
+
+/**
+ * DOC: ION_IOC_MAP_IOMMU - map a buffr to iova
+ */
+#define ION_IOC_MAP_IOMMU	_IOWR(ION_IOC_MAGIC, \
+					8, struct ion_map_iommu_data)
+
+/**
+ * DOC: ION_IOC_UNMAP_IOMMU - destory iommu mapping of a buffer
+ */
+#define ION_IOC_UNMAP_IOMMU	_IOWR(ION_IOC_MAGIC, \
+					9, struct ion_map_iommu_data)
+
+/**
+ * DOC: ION_IOC_INV - invalidate a shared file descriptors in cache
+ */
+#define ION_IOC_INV	_IOWR(ION_IOC_MAGIC, 10, struct ion_fd_data)
 
 #endif /* _UAPI_LINUX_ION_H */

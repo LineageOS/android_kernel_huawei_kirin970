@@ -123,10 +123,11 @@ static void afs_file_readpage_read_complete(struct page *page,
 /*
  * read page from file, directory or symlink, given a key to use
  */
-static int __afs_page_filler(struct key *key, struct page *page)
+int afs_page_filler(void *data, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
 	struct afs_vnode *vnode = AFS_FS_I(inode);
+	struct key *key = data;
 	size_t len;
 	off_t offset;
 	int ret;
@@ -208,13 +209,6 @@ error:
 	return ret;
 }
 
-int afs_page_filler(struct file *data, struct page *page)
-{
-	struct key *key = (struct key *)data;
-
-	return __afs_page_filler(key, page);
-}
-
 /*
  * read page from file, directory or symlink, given a file to nominate the key
  * to be used
@@ -227,14 +221,14 @@ static int afs_readpage(struct file *file, struct page *page)
 	if (file) {
 		key = file->private_data;
 		ASSERT(key != NULL);
-		ret = __afs_page_filler(key, page);
+		ret = afs_page_filler(key, page);
 	} else {
 		struct inode *inode = page->mapping->host;
 		key = afs_request_key(AFS_FS_S(inode->i_sb)->volume->cell);
 		if (IS_ERR(key)) {
 			ret = PTR_ERR(key);
 		} else {
-			ret = __afs_page_filler(key, page);
+			ret = afs_page_filler(key, page);
 			key_put(key);
 		}
 	}

@@ -4,6 +4,7 @@
 #include <linux/types.h>
 #include <linux/stacktrace.h>
 #include <linux/stackdepot.h>
+#include <linux/hisi/page_tracker.h>
 
 struct pglist_data;
 struct page_ext_operations {
@@ -33,6 +34,7 @@ enum page_ext_flags {
 	PAGE_EXT_YOUNG,
 	PAGE_EXT_IDLE,
 #endif
+	PAGE_EXT_TRACKER,
 };
 
 /*
@@ -44,6 +46,9 @@ enum page_ext_flags {
  */
 struct page_ext {
 	unsigned long flags;
+#ifdef CONFIG_HISI_PAGE_TRACKER
+	struct page_tracker page_tracker;
+#endif
 };
 
 extern void pgdat_page_ext_init(struct pglist_data *pgdat);

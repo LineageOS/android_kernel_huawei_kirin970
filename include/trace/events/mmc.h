@@ -7,6 +7,7 @@
 #include <linux/blkdev.h>
 #include <linux/mmc/core.h>
 #include <linux/mmc/host.h>
+#include <linux/mmc/mmc.h>
 #include <linux/tracepoint.h>
 
 TRACE_EVENT(mmc_request_start,
@@ -175,6 +176,16 @@ TRACE_EVENT(mmc_request_done,
 		  __entry->retune_now, __entry->need_retune,
 		  __entry->hold_retune, __entry->retune_period)
 );
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+DECLARE_TRACE(mmc_blk_rw_start,
+    TP_PROTO(unsigned int cmd, unsigned int addr, struct mmc_data *data),
+    TP_ARGS(cmd, addr, data));
+DECLARE_TRACE(mmc_blk_rw_end,
+    TP_PROTO(unsigned int cmd, unsigned int addr, struct mmc_data *data),
+    TP_ARGS(cmd, addr, data));
+
+#endif
 
 #endif /* _TRACE_MMC_H */
 

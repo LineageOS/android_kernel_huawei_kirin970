@@ -51,3 +51,9 @@ static inline gid_t multiuser_get_ext_gid(uid_t uid)
 {
 	return uid - AID_APP_START + AID_EXT_GID_START;
 }
+static inline uid_t multiuser_get_user_id(uid_t uid) {
+	return uid / AID_USER_OFFSET;
+}
+static inline uid_t multiuser_get_app_id(uid_t uid) {
+	return uid % AID_USER_OFFSET;
+}

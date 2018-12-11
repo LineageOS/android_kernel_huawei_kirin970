@@ -28,6 +28,8 @@
 
 #include <linux/types.h>
 
+#define APP_NAME_LEN_MAX (20)
+
 struct wake_irq;
 
 /**
@@ -53,6 +55,9 @@ struct wake_irq;
  */
 struct wakeup_source {
 	const char 		*name;
+#ifdef CONFIG_PM_FAIL_DEBUG
+	char app_name[APP_NAME_LEN_MAX];
+#endif
 	struct list_head	entry;
 	spinlock_t		lock;
 	struct wake_irq		*wakeirq;
@@ -70,6 +75,7 @@ struct wakeup_source {
 	unsigned long		wakeup_count;
 	bool			active:1;
 	bool			autosleep_enabled:1;
+	u8				lock_timeout;
 };
 
 #ifdef CONFIG_PM_SLEEP
@@ -200,5 +206,10 @@ static inline void wakeup_source_trash(struct wakeup_source *ws)
 	wakeup_source_remove(ws);
 	wakeup_source_drop(ws);
 }
+
+int wakeup_source_set(char *name, u8 lock_timeout);
+int wake_unlockByName(char *name);
+int wakeup_source_set_all(u8 lock_timeout);
+int wake_unlockAll(unsigned int msec);
 
 #endif /* _LINUX_PM_WAKEUP_H */

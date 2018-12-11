@@ -420,21 +420,7 @@ static const struct dmi_system_id byt_table[] = {
 		.callback = byt_thinkpad10_quirk_cb,
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad 10"),
-		},
-	},
-	{
-		.callback = byt_thinkpad10_quirk_cb,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad Tablet B"),
-		},
-	},
-	{
-		.callback = byt_thinkpad10_quirk_cb,
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_VERSION, "Lenovo Miix 2 10"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "20C3001VHH"),
 		},
 	},
 	{ }

@@ -92,10 +92,6 @@
 #define __weak		__attribute__((weak))
 #define __alias(symbol)	__attribute__((alias(#symbol)))
 
-#ifdef RETPOLINE
-#define __noretpoline __attribute__((indirect_branch("keep")))
-#endif
-
 /*
  * it doesn't make sense on ARM (currently the only user of __naked)
  * to trace naked functions because then mcount is called without
@@ -221,6 +217,10 @@
 /* Mark a function definition as prohibited from being cloned. */
 #define __noclone	__attribute__((__noclone__, __optimize__("no-tracer")))
 
+#if defined(RANDSTRUCT_PLUGIN) && !defined(__CHECKER__)
+#define __randomize_layout __attribute__((randomize_layout))
+#define __no_randomize_layout __attribute__((no_randomize_layout))
+#endif
 #endif /* GCC_VERSION >= 40500 */
 
 #if GCC_VERSION >= 40600
@@ -231,7 +231,16 @@
  * this.
  */
 #define __visible	__attribute__((externally_visible))
-#endif
+/*
+ * RANDSTRUCT_PLUGIN wants to use an anonymous struct, but it is only
+ * possible since GCC 4.6. To provide as much build testing coverage
+ * as possible, this is used for all GCC 4.6+ builds, and not just on
+ * RANDSTRUCT_PLUGIN builds.
+ */
+#define randomized_struct_fields_start	struct {
+#define randomized_struct_fields_end	} __randomize_layout;
+
+#endif /* GCC_VERSION >= 40600 */
 
 
 #if GCC_VERSION >= 40900 && !defined(__CHECKER__)
@@ -282,7 +291,17 @@
 #elif GCC_VERSION >= 40902
 #define KASAN_ABI_VERSION 3
 #endif
-
+/*
+ * Walkaround for our gcc version number is below 40902.
+ */
+#ifdef CONFIG_KASAN
+/*
+ * Tell the compiler that address safety instrumentation (KASAN)
+ * should not be applied to that function.
+ * Conflicts with inlining: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368
+ */
+#define __no_sanitize_address __attribute__((no_sanitize_address))
+#else
 #if GCC_VERSION >= 40902
 /*
  * Tell the compiler that address safety instrumentation (KASAN)
@@ -291,7 +310,7 @@
  */
 #define __no_sanitize_address __attribute__((no_sanitize_address))
 #endif
-
+#endif
 #endif	/* gcc version >= 40000 specific checks */
 
 #if !defined(__noclone)

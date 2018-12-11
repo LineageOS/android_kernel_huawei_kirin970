@@ -70,7 +70,7 @@
 
 	.weak memcpy
 ENTRY(__memcpy)
-ENTRY(memcpy)
+ENTRY_NOTAG(memcpy)
 #include "copy_template.S"
 	ret
 ENDPIPROC(memcpy)

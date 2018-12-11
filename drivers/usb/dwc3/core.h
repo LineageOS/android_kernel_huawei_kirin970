@@ -26,6 +26,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/mm.h>
 #include <linux/debugfs.h>
+#include <linux/wait.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -128,6 +129,7 @@
 #define DWC3_GEVNTCOUNT(n)	(0xc40c + (n * 0x10))
 
 #define DWC3_GHWPARAMS8		0xc600
+#define DWC3_GUCTL3		0xc60c
 #define DWC3_GFLADJ		0xc630
 
 /* Device Registers */
@@ -197,6 +199,9 @@
 #define DWC3_GCTL_U2EXIT_LFPS		(1 << 2)
 #define DWC3_GCTL_GBLHIBERNATIONEN	(1 << 1)
 #define DWC3_GCTL_DSBLCLKGTNG		(1 << 0)
+
+/* Global User Control Register 1 */
+#define DWC3_GUCTL1_RESERVED26		(1u << 26)
 
 /* Global USB2 PHY Configuration Register */
 #define DWC3_GUSB2PHYCFG_PHYSOFTRST	(1 << 31)
@@ -449,6 +454,8 @@
 #define DWC3_DEPCMD_SETTRANSFRESOURCE	(0x02 << 0)
 #define DWC3_DEPCMD_SETEPCONFIG		(0x01 << 0)
 
+#define DWC3_DEPCMD_CMD(x)		((x) & 0xf)
+
 /* The EP number goes 0..31 so ep0 is always out and ep1 is always in */
 #define DWC3_DALEPENA_EP(n)		(1 << n)
 
@@ -498,6 +505,7 @@ struct dwc3_event_buffer {
  * @endpoint: usb endpoint
  * @pending_list: list of pending requests for this endpoint
  * @started_list: list of started requests on this endpoint
+ * @wait_end_transfer: wait_queue_head_t for waiting on End Transfer complete
  * @lock: spinlock for endpoint request queue traversal
  * @regs: pointer to first endpoint register
  * @trb_pool: array of transaction buffers
@@ -523,6 +531,8 @@ struct dwc3_ep {
 	struct list_head	pending_list;
 	struct list_head	started_list;
 
+	wait_queue_head_t	wait_end_transfer;
+
 	spinlock_t		lock;
 	void __iomem		*regs;
 
@@ -539,6 +549,8 @@ struct dwc3_ep {
 #define DWC3_EP_BUSY		(1 << 4)
 #define DWC3_EP_PENDING_REQUEST	(1 << 5)
 #define DWC3_EP_MISSED_ISOC	(1 << 6)
+#define DWC3_EP_END_TRANSFER_PENDING	(1 << 7)
+#define DWC3_EP_TRANSFER_STARTED (1 << 8)
 
 	/* This last one is specific to EP0 */
 #define DWC3_EP0_DIR_IN		(1 << 31)
@@ -735,6 +747,8 @@ struct dwc3_scratchpad_array {
 	__le64	dma_adr[DWC3_MAX_HIBER_SCRATCHBUFS];
 };
 
+struct dwc3_otg;
+
 /**
  * struct dwc3 - representation of our controller
  * @ctrl_req: usb control request which is used for ep0
@@ -872,6 +886,8 @@ struct dwc3 {
 	size_t			regs_size;
 
 	enum usb_dr_mode	dr_mode;
+	u32			current_dr_role;
+	u32			desired_dr_role;
 	enum usb_phy_interface	hsphy_mode;
 
 	u32			fladj;
@@ -946,8 +962,21 @@ struct dwc3 {
 
 	const char		*hsphy_interface;
 
+	struct dwc3_otg *dwc_otg;
+#ifdef CONFIG_HISI_USB_DWC3_MASK_IRQ_WORKAROUND
+	int irq_state;
+#endif
+	struct tasklet_struct	bh;
+
 	unsigned		connected:1;
 	unsigned		delayed_status:1;
+
+	/*
+	 * the delayed status may come before notready interrupt,
+	 * in this case, don't wait for delayed status
+	 */
+	unsigned		status_queued:1;
+
 	unsigned		ep0_bounced:1;
 	unsigned		ep0_expect_in:1;
 	unsigned		has_hibernation:1;
@@ -977,6 +1006,11 @@ struct dwc3 {
 
 	unsigned		tx_de_emphasis_quirk:1;
 	unsigned		tx_de_emphasis:2;
+	unsigned		snps_phy_quirk:1;
+	unsigned		gadget_pullup:1;
+	unsigned		pcd_suspended:1;
+	unsigned		ctrl_nyet_abnormal:1;
+	unsigned		warm_reset_after_init:1;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1031,6 +1065,9 @@ struct dwc3_event_depevt {
 #define DEPEVT_STATUS_IOC	(1 << 2)
 #define DEPEVT_STATUS_LST	(1 << 3)
 
+/* Within XferInProgress */
+#define DEPEVT_STATUS_MISSEDISOC	(1 << 3)
+
 /* Stream event only */
 #define DEPEVT_STREAMEVT_FOUND		1
 #define DEPEVT_STREAMEVT_NOTFOUND	2
@@ -1044,6 +1081,9 @@ struct dwc3_event_depevt {
 #define DEPEVT_TRANSFER_BUS_EXPIRY	2
 
 	u32	parameters:16;
+
+/* For Command Complete Events */
+#define DEPEVT_PARAMETER_CMD(n)	(((n) & (0xf << 8)) >> 8)
 } __packed;
 
 /**
@@ -1129,8 +1169,11 @@ struct dwc3_gadget_ep_cmd_params {
 #define DWC3_HAS_OTG			BIT(3)
 
 /* prototypes */
-void dwc3_set_mode(struct dwc3 *dwc, u32 mode);
+void dwc3_set_prtcap(struct dwc3 *dwc, u32 mode);
 u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type);
+int dwc3_core_init(struct dwc3 *dwc);
+int dwc3_event_buffers_setup(struct dwc3 *dwc);
+void dwc3_event_buffers_cleanup(struct dwc3 *dwc);
 
 /* check whether we are on the DWC_usb31 core */
 static inline bool dwc3_is_usb31(struct dwc3 *dwc)
@@ -1157,6 +1200,12 @@ int dwc3_gadget_set_link_state(struct dwc3 *dwc, enum dwc3_link_state state);
 int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 		struct dwc3_gadget_ep_cmd_params *params);
 int dwc3_send_gadget_generic_command(struct dwc3 *dwc, unsigned cmd, u32 param);
+int dwc3_conndone_notifier_register(struct notifier_block *nb);
+int dwc3_conndone_notifier_unregister(struct notifier_block *nb);
+int dwc3_setconfig_notifier_register(struct notifier_block *nb);
+int dwc3_setconfig_notifier_unregister(struct notifier_block *nb);
+int dwc3_reset_notifier_register(struct notifier_block *nb);
+int dwc3_reset_notifier_unregister(struct notifier_block *nb);
 #else
 static inline int dwc3_gadget_init(struct dwc3 *dwc)
 { return 0; }
@@ -1175,6 +1224,18 @@ static inline int dwc3_send_gadget_ep_cmd(struct dwc3_ep *dep, unsigned cmd,
 { return 0; }
 static inline int dwc3_send_gadget_generic_command(struct dwc3 *dwc,
 		int cmd, u32 param)
+{ return 0; }
+static inline int dwc3_conndone_notifier_register(struct notifier_block *nb)
+{ return 0; }
+static inline int dwc3_conndone_notifier_unregister(struct notifier_block *nb)
+{ return 0; }
+static inline int dwc3_setconfig_notifier_register(struct notifier_block *nb)
+{ return 0; }
+static inline int dwc3_setconfig_notifier_unregister(struct notifier_block *nb)
+{ return 0; }
+static inline int dwc3_reset_notifier_register(struct notifier_block *nb)
+{ return 0; }
+static inline int dwc3_reset_notifier_unregister(struct notifier_block *nb)
 { return 0; }
 #endif
 
@@ -1208,5 +1269,8 @@ static inline int dwc3_ulpi_init(struct dwc3 *dwc)
 static inline void dwc3_ulpi_exit(struct dwc3 *dwc)
 { }
 #endif
+
+int dwc3_suspend(struct device *dev);
+int dwc3_resume(struct device *dev);
 
 #endif /* __DRIVERS_USB_DWC3_CORE_H */

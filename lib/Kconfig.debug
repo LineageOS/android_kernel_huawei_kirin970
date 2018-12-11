@@ -113,6 +113,21 @@ config DYNAMIC_DEBUG
 
 	  See Documentation/dynamic-debug-howto.txt for additional information.
 
+config HISI_TIME
+	bool "Use Hisi time in printk"
+	default n
+	depends on PRINTK && HISI_AMBA_PL011
+
+config HISI_PRINTK_EXTENSION
+	bool "Use Hisi extension in printk"
+	default n
+	depends on HISI_TIME
+
+config HISI_APANIC
+	bool "Enable Hisi apanic function in printk"
+	default n
+	depends on HISI_TIME
+
 endmenu # "printk and dmesg options"
 
 menu "Compile-time checks and compiler options"
@@ -390,7 +405,7 @@ config MAGIC_SYSRQ
 config MAGIC_SYSRQ_DEFAULT_ENABLE
 	hex "Enable magic SysRq key functions by default"
 	depends on MAGIC_SYSRQ
-	default 0x1
+	default 0x0
 	help
 	  Specifies which SysRq key functions are enabled by default.
 	  This may be set to 1 or 0 to enable or disable them all, or
@@ -812,7 +827,14 @@ config BOOTPARAM_SOFTLOCKUP_PANIC_VALUE
 	depends on LOCKUP_DETECTOR
 	range 0 1
 	default 0 if !BOOTPARAM_SOFTLOCKUP_PANIC
-	default 1 if BOOTPARAM_SOFTLOCKUP_PANIC
+	default 0 if BOOTPARAM_SOFTLOCKUP_PANIC
+
+# add HW_DIE_CATCH config
+config HW_DIE_CATCH
+    bool "unexpected die catch feature"
+    default y
+    help
+      catch a process kill/exit and will transform it SIGABORT
 
 config DETECT_HUNG_TASK
 	bool "Detect Hung Tasks"
@@ -828,6 +850,13 @@ config DETECT_HUNG_TASK
 	  task will stay in uninterruptible state. If lockdep is
 	  enabled then all held locks will also be reported. This
 	  feature has negligible overhead.
+
+config DETECT_HUAWEI_HUNG_TASK
+        bool "Detect Huawei Hung Tasks"
+        depends on DETECT_HUNG_TASK
+        default n
+        help
+          Say Y here to enable huawei hung tasks detect.
 
 config DEFAULT_HUNG_TASK_TIMEOUT
 	int "Default timeout for hung task detection (in seconds)"
@@ -917,6 +946,14 @@ config SCHED_DEBUG
 	  If you say Y here, the /proc/sched_debug file will be provided
 	  that can help debug the scheduler. The runtime overhead of this
 	  option is minimal.
+
+config SCHED_HWSTATUS
+	bool "Collect scheduler debugging info for performance"
+	depends on DEBUG_KERNEL && PROC_FS && SCHEDSTATS
+	default n
+	help
+	  If you say Y here, the /proc/sched_hw file will be provided
+	  that can help debug the scheduler performance.
 
 config SCHED_INFO
 	bool

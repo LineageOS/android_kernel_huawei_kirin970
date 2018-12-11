@@ -330,6 +330,17 @@ extern unsigned long shrink_all_memory(unsigned long nr_pages);
 extern int vm_swappiness;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
+#ifdef CONFIG_HUAWEI_RCC
+#define RCC_MODE_ANON   1
+#define RCC_MODE_FILE   2
+int try_to_free_pages_ex(int nr_pages, int mode);
+#endif
+
+#ifdef CONFIG_SHRINK_MEMORY
+extern int sysctl_shrink_memory;
+extern int sysctl_shrinkmem_handler(struct ctl_table *table, int write,
+					void __user *buffer, size_t *length , loff_t *ppos);
+#endif
 
 #ifdef CONFIG_NUMA
 extern int node_reclaim_mode;

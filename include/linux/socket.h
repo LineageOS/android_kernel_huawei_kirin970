@@ -282,6 +282,10 @@ struct ucred {
 #define MSG_BATCH	0x40000 /* sendmmsg(): more messages coming */
 #define MSG_EOF         MSG_FIN
 
+#ifdef CONFIG_HUAWEI_BASTET
+#define MSG_HRT		0x40000
+#define MSG_LPW		0x80000
+#endif
 #define MSG_FASTOPEN	0x20000000	/* Send data in TCP SYN */
 #define MSG_CMSG_CLOEXEC 0x40000000	/* Set close_on_exec for file
 					   descriptor received through

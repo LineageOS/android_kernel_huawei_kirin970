@@ -45,6 +45,10 @@
 #include <asm/system_misc.h>
 #include <asm/sysreg.h>
 
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/rdr_hisi_platform.h>
+#endif
+
 static const char *handler[]= {
 	"Synchronous Abort",
 	"IRQ",
@@ -117,7 +121,7 @@ static void __dump_instr(const char *lvl, struct pt_regs *regs)
 		bad = get_user(val, &((u32 *)addr)[i]);
 
 		if (!bad)
-			p += sprintf(p, i == 0 ? "(%08x) " : "%08x ", val);
+			p += sprintf(p, i == 0 ? "(%08x) " : "%08x ", val); /*[false alarm]:fortify */
 		else {
 			p += sprintf(p, "bad PC value");
 			break;
@@ -143,6 +147,11 @@ static void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 	struct stackframe frame;
 	unsigned long irq_stack_ptr;
 	int skip;
+
+	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
+
+	if (!tsk)
+		tsk = current;
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
 
@@ -273,11 +282,15 @@ void die(const char *str, struct pt_regs *regs, int err)
 {
 	int ret;
 
+
 	oops_enter();
 
 	raw_spin_lock_irq(&die_lock);
 	console_verbose();
 	bust_spinlocks(1);
+#ifdef CONFIG_HISI_BB
+	set_exception_info(instruction_pointer(regs));
+#endif
 	ret = __die(str, err, regs);
 
 	if (regs && kexec_should_crash(current))

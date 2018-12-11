@@ -79,6 +79,36 @@
 #define IF_HAVE_PG_IDLE(flag,string)
 #endif
 
+/* added for kernel dump. */
+#ifdef CONFIG_HISI_KERNELDUMP    
+#define __def_pageflag_names						\
+	{1UL << PG_memdump,             "kerneldump"    },              \
+	{1UL << PG_locked,		"locked"	},		\
+	{1UL << PG_error,		"error"		},		\
+	{1UL << PG_referenced,		"referenced"	},		\
+	{1UL << PG_uptodate,		"uptodate"	},		\
+	{1UL << PG_dirty,		"dirty"		},		\
+	{1UL << PG_lru,			"lru"		},		\
+	{1UL << PG_active,		"active"	},		\
+	{1UL << PG_slab,		"slab"		},		\
+	{1UL << PG_owner_priv_1,	"owner_priv_1"	},		\
+	{1UL << PG_arch_1,		"arch_1"	},		\
+	{1UL << PG_reserved,		"reserved"	},		\
+	{1UL << PG_private,		"private"	},		\
+	{1UL << PG_private_2,		"private_2"	},		\
+	{1UL << PG_writeback,		"writeback"	},		\
+	{1UL << PG_head,		"head"		},		\
+	{1UL << PG_swapcache,		"swapcache"	},		\
+	{1UL << PG_mappedtodisk,	"mappedtodisk"	},		\
+	{1UL << PG_reclaim,		"reclaim"	},		\
+	{1UL << PG_swapbacked,		"swapbacked"	},		\
+	{1UL << PG_unevictable,		"unevictable"	}		\
+IF_HAVE_PG_MLOCK(PG_mlocked,		"mlocked"	)		\
+IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
+IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\
+IF_HAVE_PG_IDLE(PG_young,		"young"		)		\
+IF_HAVE_PG_IDLE(PG_idle,		"idle"		)
+#else
 #define __def_pageflag_names						\
 	{1UL << PG_locked,		"locked"	},		\
 	{1UL << PG_error,		"error"		},		\
@@ -105,6 +135,7 @@ IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
 IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\
 IF_HAVE_PG_IDLE(PG_young,		"young"		)		\
 IF_HAVE_PG_IDLE(PG_idle,		"idle"		)
+#endif
 
 #define show_page_flags(flags)						\
 	(flags) ? __print_flags(flags, "|",				\

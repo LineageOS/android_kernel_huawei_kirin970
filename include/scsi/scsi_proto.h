@@ -175,6 +175,12 @@
 
 #define SCSI_MAX_VARLEN_CDB_SIZE 260
 
+#ifdef CONFIG_HISI_SCSI_VENDOR_CMD_HOTCOLD
+#define SCSI_HOTCOLD_ID_OFFSET			5 //0
+//#define SCSI_HOTCOLD_ID_BITS			3 //4
+//#define SCSI_HOTCOLD_ID_BITMASK			0x7 //0xF
+#endif
+
 /* defined in T10 SCSI Primary Commands-2 (SPC2) */
 struct scsi_varlen_cdb_hdr {
 	__u8 opcode;        /* opcode always == VARIABLE_LENGTH_CMD */
@@ -239,6 +245,7 @@ struct scsi_varlen_cdb_hdr {
 #define ABORTED_COMMAND     0x0b
 #define VOLUME_OVERFLOW     0x0d
 #define MISCOMPARE          0x0e
+#define HI1861_INTERNEL     0x0C /*for hi1861*/
 
 
 /*

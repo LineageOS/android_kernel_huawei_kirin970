@@ -1498,16 +1498,12 @@ static int bnxt_async_event_process(struct bnxt *bp,
 
 		if (BNXT_VF(bp))
 			goto async_event_process_exit;
-
-		/* print unsupported speed warning in forced speed mode only */
-		if (!(link_info->autoneg & BNXT_AUTONEG_SPEED) &&
-		    (data1 & 0x20000)) {
+		if (data1 & 0x20000) {
 			u16 fw_speed = link_info->force_link_speed;
 			u32 speed = bnxt_fw_to_ethtool_speed(fw_speed);
 
-			if (speed != SPEED_UNKNOWN)
-				netdev_warn(bp->dev, "Link speed %d no longer supported\n",
-					    speed);
+			netdev_warn(bp->dev, "Link speed %d no longer supported\n",
+				    speed);
 		}
 		set_bit(BNXT_LINK_SPEED_CHNG_SP_EVENT, &bp->sp_event);
 		/* fall thru */

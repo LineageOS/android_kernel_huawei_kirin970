@@ -218,7 +218,7 @@ efi_header_end:
 	 *  x28        __create_page_tables()     callee preserved temp register
 	 *  x19/x20    __primary_switch()         callee preserved temp registers
 	 */
-ENTRY(stext)
+ENTRY_NOTAG(stext)
 	bl	preserve_boot_args
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
 	adrp	x23, __PHYS_OFFSET
@@ -430,8 +430,19 @@ __primary_switched:
 	add	sp, x4, #THREAD_SIZE
 	adr_l	x5, init_task
 	msr	sp_el0, x5			// Save thread_info
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+	mrs	x4, mpidr_el1
+	isb
+	ubfx	x4, x4, #8, #8
+	cmp	x4, #0x4
 
+	adr_l	x5, vectors
+	adr_l	x8, bigcpus_vectors
+
+	csel	x8, x5, x8, lt
+#else
 	adr_l	x8, vectors			// load VBAR_EL1 with virtual
+#endif
 	msr	vbar_el1, x8			// vector table address
 	isb
 
@@ -476,7 +487,7 @@ ENDPROC(__primary_switched)
  */
 	.section ".idmap.text","awx"
 
-ENTRY(kimage_vaddr)
+ENTRY_NOTAG(kimage_vaddr)
 	.quad		_text - TEXT_OFFSET
 
 /*
@@ -645,14 +656,14 @@ ENDPROC(set_cpu_boot_mode_flag)
  * This is not in .bss, because we set it sufficiently early that the boot-time
  * zeroing of .bss would clobber it.
  */
-ENTRY(__boot_cpu_mode)
+ENTRY_NOTAG(__boot_cpu_mode)
 	.long	BOOT_CPU_MODE_EL2
 	.long	BOOT_CPU_MODE_EL1
 /*
  * The booting CPU updates the failed status @__early_cpu_boot_status,
  * with MMU turned off.
  */
-ENTRY(__early_cpu_boot_status)
+ENTRY_NOTAG(__early_cpu_boot_status)
 	.long 	0
 
 	.popsection
@@ -661,7 +672,7 @@ ENTRY(__early_cpu_boot_status)
 	 * This provides a "holding pen" for platforms to hold all secondary
 	 * cores are held until we're ready for them to initialise.
 	 */
-ENTRY(secondary_holding_pen)
+ENTRY_NOTAG(secondary_holding_pen)
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
 	bl	set_cpu_boot_mode_flag
 	mrs	x0, mpidr_el1
@@ -696,7 +707,19 @@ secondary_startup:
 ENDPROC(secondary_startup)
 
 __secondary_switched:
+#ifdef CONFIG_HISI_HARDEN_BRANCH_PREDICTOR
+	mrs	x1, mpidr_el1
+	isb
+	ubfx	x1, x1, #8, #8
+	cmp	x1, #0x4
+
+	adr_l	x0, vectors
+	adr_l	x5, bigcpus_vectors
+
+	csel	x5, x0, x5, lt
+#else
 	adr_l	x5, vectors
+#endif
 	msr	vbar_el1, x5
 	isb
 

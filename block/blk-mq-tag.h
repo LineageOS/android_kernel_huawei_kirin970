@@ -9,12 +9,23 @@
 struct blk_mq_tags {
 	unsigned int nr_tags;
 	unsigned int nr_reserved_tags;
-
+#ifdef CONFIG_HISI_BLK
+	unsigned int nr_high_prio_tags;
+	unsigned int tags_id_offset;
+	unsigned int reserved_tags_id_offset;
+	unsigned int high_prio_tags_id_offset;
+	atomic_t tags_used_count;
+	atomic_t reserved_tags_used_count;
+	atomic_t high_prio_tags_used_count;
+	struct blk_mq_tag_set *set;
+#endif
 	atomic_t active_queues;
 
 	struct sbitmap_queue bitmap_tags;
 	struct sbitmap_queue breserved_tags;
-
+#ifdef CONFIG_HISI_BLK
+	struct sbitmap_queue highprio_tags;
+#endif
 	struct request **rqs;
 	struct list_head page_list;
 };

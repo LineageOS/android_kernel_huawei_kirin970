@@ -1034,7 +1034,7 @@ static int set_bdev_super(struct super_block *s, void *data)
 	 * We set the bdi here to the queue backing, file systems can
 	 * overwrite this in ->fill_super()
 	 */
-	s->s_bdi = &bdev_get_queue(s->s_bdev)->backing_dev_info;
+	s->s_bdi = bdev_get_queue(s->s_bdev)->backing_dev_info;
 	return 0;
 }
 
@@ -1123,7 +1123,13 @@ void kill_block_super(struct super_block *sb)
 	struct block_device *bdev = sb->s_bdev;
 	fmode_t mode = sb->s_mode;
 
+#ifdef CONFIG_F2FS_CHECK_FS
+	spin_lock(&bdev_access_info.lock);
 	bdev->bd_super = NULL;
+	spin_unlock(&bdev_access_info.lock);
+#else
+	bdev->bd_super = NULL;
+#endif
 	generic_shutdown_super(sb);
 	sync_blockdev(bdev);
 	WARN_ON_ONCE(!(mode & FMODE_EXCL));

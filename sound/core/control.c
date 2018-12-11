@@ -29,6 +29,7 @@
 #include <sound/minors.h>
 #include <sound/info.h>
 #include <sound/control.h>
+#include <asm/ptrace.h>
 
 /* max number of user-defined controls */
 #define MAX_USER_CONTROLS	32
@@ -670,7 +671,7 @@ struct snd_kcontrol *snd_ctl_find_numid(struct snd_card *card, unsigned int numi
 	if (snd_BUG_ON(!card || !numid))
 		return NULL;
 	list_for_each_entry(kctl, &card->controls, list) {
-		if (kctl->id.numid <= numid && kctl->id.numid + kctl->count > numid)
+		if (kctl != NULL && kctl->id.numid <= numid && kctl->id.numid + kctl->count > numid)
 			return kctl;
 	}
 	return NULL;
@@ -771,6 +772,14 @@ static int snd_ctl_elem_list(struct snd_card *card,
 			if (offset == 0)
 				break;
 			kctl = snd_kcontrol(plist);
+			if (kctl == NULL) {
+				pr_err("[%s:%d] kctl is NULL!\n", __func__, __LINE__);
+				dump_stack();
+
+				up_read(&card->controls_rwsem);
+				vfree(dst);
+				return -EFAULT;
+			}
 			if (offset < kctl->count)
 				break;
 			offset -= kctl->count;
@@ -780,6 +789,14 @@ static int snd_ctl_elem_list(struct snd_card *card,
 		id = dst;
 		while (space > 0 && plist != &card->controls) {
 			kctl = snd_kcontrol(plist);
+			if (kctl == NULL) {
+				pr_err("[%s:%d] kctl is NULL!\n", __func__, __LINE__);
+				dump_stack();
+
+				up_read(&card->controls_rwsem);
+				vfree(dst);
+				return -EFAULT;
+			}
 			for (jidx = offset; space > 0 && jidx < kctl->count; jidx++) {
 				snd_ctl_build_ioff(id, kctl, jidx);
 				id++;

@@ -216,6 +216,9 @@ struct usb_ep {
 	const struct usb_ep_ops	*ops;
 	struct list_head	ep_list;
 	struct usb_ep_caps	caps;
+#ifdef CONFIG_HISI_DEBUG_FS
+	bool			fake_claimed;
+#endif
 	bool			claimed;
 	bool			enabled;
 	unsigned		maxpacket:16;
@@ -404,6 +407,9 @@ struct usb_gadget {
 	unsigned			is_selfpowered:1;
 	unsigned			deactivated:1;
 	unsigned			connected:1;
+	#ifdef CONFIG_HISI_USB_CONFIGFS
+	unsigned	is_removing_driver;
+	#endif
 };
 #define work_to_gadget(w)	(container_of((w), struct usb_gadget, work))
 

@@ -38,12 +38,16 @@
 /* Should be same as EXT4_XATTR_INDEX_ENCRYPTION */
 #define F2FS_XATTR_INDEX_ENCRYPTION		9
 
-#define F2FS_XATTR_NAME_ENCRYPTION_CONTEXT	"c"
+#define F2FS_XATTR_INDEX_ECE_ENCRYPTION	10
+
+#define F2FS_XATTR_NAME_ENCRYPTION_CONTEXT		"c"
 
 struct f2fs_xattr_header {
 	__le32  h_magic;        /* magic number for identification */
 	__le32  h_refcount;     /* reference count */
-	__u32   h_reserved[4];  /* zero right now */
+	__le32	h_ctx_crc;	/* crc for fscrypt, zero if not used */
+	__le32	h_xattr_flags;	/* flags to  check the xattr entry*/
+	__u32   h_reserved[2];  /* zero right now */
 };
 
 struct f2fs_xattr_entry {
@@ -121,8 +125,13 @@ extern const struct xattr_handler *f2fs_xattr_handlers[];
 extern int f2fs_setxattr(struct inode *, int, const char *,
 				const void *, size_t, struct page *, int);
 extern int f2fs_getxattr(struct inode *, int, const char *, void *,
-						size_t, struct page *);
+				size_t, struct page *, int *);
 extern ssize_t f2fs_listxattr(struct dentry *, char *, size_t);
+
+int set_fscrypt_crc(struct inode *, struct page *, u32);
+struct f2fs_xattr_header* get_xattr_header(struct inode *, struct page *,
+					   struct page **);
+void put_xattr_header(struct page *);
 #else
 
 #define f2fs_xattr_handlers	NULL
@@ -134,7 +143,7 @@ static inline int f2fs_setxattr(struct inode *inode, int index,
 }
 static inline int f2fs_getxattr(struct inode *inode, int index,
 			const char *name, void *buffer,
-			size_t buffer_size, struct page *dpage)
+			size_t buffer_size, struct page *dpage, int *has_crc)
 {
 	return -EOPNOTSUPP;
 }

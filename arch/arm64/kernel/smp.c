@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
+#include <linux/mmc/rpmb.h>
 #include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/init.h>
@@ -58,6 +58,20 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
 
+#ifdef CONFIG_HISI_FIQ
+#include <linux/hisi/hisi_fiq.h>
+#endif
+#include <linux/version.h>
+
+#ifdef CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE
+#include <chipset_common/kernel_harden/kaslr.h>
+#endif
+
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/rdr_pub.h>
+#include <linux/hisi/util.h>
+#endif
+
 DEFINE_PER_CPU_READ_MOSTLY(int, cpu_number);
 EXPORT_PER_CPU_SYMBOL(cpu_number);
 
@@ -67,6 +81,7 @@ EXPORT_PER_CPU_SYMBOL(cpu_number);
  * where to place its SVC stack
  */
 struct secondary_data secondary_data;
+extern void hisi_hisee_active(void);
 /* Number of CPUs which aren't online, but looping in kernel text. */
 int cpus_stuck_in_kernel;
 
@@ -76,7 +91,11 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 	IPI_TIMER,
 	IPI_IRQ_WORK,
-	IPI_WAKEUP
+	IPI_SECURE_RPMB,
+	IPI_MNTN_INFORM,
+	IPI_CPU_BACKTRACE,
+	IPI_HISEE_INFORM,
+	IPI_WAKEUP,
 };
 
 #ifdef CONFIG_ARM64_VHE
@@ -747,7 +766,7 @@ void __init set_smp_cross_call(void (*fn)(const struct cpumask *, unsigned int))
 {
 	__smp_cross_call = fn;
 }
-
+/*lint -e773*/
 static const char *ipi_types[NR_IPI] __tracepoint_string = {
 #define S(x,s)	[x] = s
 	S(IPI_RESCHEDULE, "Rescheduling interrupts"),
@@ -755,8 +774,13 @@ static const char *ipi_types[NR_IPI] __tracepoint_string = {
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
 	S(IPI_TIMER, "Timer broadcast interrupts"),
 	S(IPI_IRQ_WORK, "IRQ work interrupts"),
+	S(IPI_SECURE_RPMB, "HISI Secure RPMB"),
+	S(IPI_MNTN_INFORM, "HISI MNTN Inform"),
+	S(IPI_CPU_BACKTRACE, "CPU backtrace"),
+	S(IPI_HISEE_INFORM, "HISI HISEE INFORM"),
 	S(IPI_WAKEUP, "CPU wake-up interrupts"),
 };
+/*lint +e773*/
 
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
 {
@@ -814,11 +838,44 @@ void arch_irq_work_raise(void)
 }
 #endif
 
+static DEFINE_RAW_SPINLOCK(stop_lock);
+
 /*
  * ipi_cpu_stop - handle IPI from smp_send_stop()
  */
+#ifdef CONFIG_HISI_BB
+/*
+ *  Don't need to call show_extra_register_data when cpu handling IPI_STOP.
+ *  Declared in <asm/smp.h>
+ */
+unsigned int g_cpu_in_ipi_stop;
+#endif
+
 static void ipi_cpu_stop(unsigned int cpu)
 {
+#ifdef CONFIG_HISI_BB
+	struct pt_regs regs;
+	unsigned int mask;
+#endif
+
+	if (system_state == SYSTEM_BOOTING ||
+	    system_state == SYSTEM_RUNNING) {
+		raw_spin_lock(&stop_lock);
+		pr_crit("CPU%u: stopping\n", cpu);
+#ifdef CONFIG_HISI_BB
+		mask = 0x1 << get_cpu();
+		g_cpu_in_ipi_stop |= mask;
+		memset(&regs, 0x0, sizeof(regs));
+		get_pt_regs(&regs);
+		show_regs(&regs);
+		if (check_himntn(HIMNTN_PANIC_INTO_LOOP) != 1)
+			flush_cache_all();
+		put_cpu();
+#endif
+		dump_stack();
+		raw_spin_unlock(&stop_lock);
+	}
+
 	set_cpu_online(cpu, false);
 
 	local_irq_disable();
@@ -873,6 +930,15 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		break;
 #endif
 
+#ifdef CONFIG_HISI_HISEE
+	case IPI_HISEE_INFORM:
+		irq_enter();
+		hisi_hisee_active();
+		irq_exit();
+		break;
+
+#endif
+
 #ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
 	case IPI_WAKEUP:
 		WARN_ONCE(!acpi_parking_protocol_valid(cpu),
@@ -881,6 +947,21 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		break;
 #endif
 
+#ifdef CONFIG_HISI_FIQ
+	case IPI_MNTN_INFORM:
+		irq_enter();
+		hisi_mntn_inform();
+		irq_exit();
+		break;
+#endif
+
+#ifdef CONFIG_HISI_MMC_SECURE_RPMB
+	case IPI_SECURE_RPMB:
+		irq_enter();
+		hisi_rpmb_active();
+		irq_exit();
+		break;
+#endif
 	default:
 		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
 		break;
@@ -919,10 +1000,10 @@ void smp_send_stop(void)
 		smp_cross_call(&mask, IPI_CPU_STOP);
 	}
 
-	/* Wait up to one second for other CPUs to stop */
-	timeout = USEC_PER_SEC;
+	/* Wait up to 1 second for other CPUs to stop */
+	timeout = USEC_PER_SEC >> 4;
 	while (num_online_cpus() > 1 && timeout--)
-		udelay(1);
+		udelay(1 << 4);
 
 	if (num_online_cpus() > 1)
 		pr_warning("SMP: failed to stop secondary CPUs %*pbl\n",

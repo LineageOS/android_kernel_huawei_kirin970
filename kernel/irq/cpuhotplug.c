@@ -11,6 +11,9 @@
 #include <linux/interrupt.h>
 #include <linux/ratelimit.h>
 #include <linux/irq.h>
+#ifdef CONFIG_HISI_CPU_ISOLATION
+#include <linux/cpumask.h>
+#endif
 
 #include "internals.h"
 
@@ -20,6 +23,9 @@ static bool migrate_one_irq(struct irq_desc *desc)
 	const struct cpumask *affinity = d->common->affinity;
 	struct irq_chip *c;
 	bool ret = false;
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	struct cpumask available_cpus;
+#endif
 
 	/*
 	 * If this is a per-CPU interrupt, or the affinity does not
@@ -29,10 +35,40 @@ static bool migrate_one_irq(struct irq_desc *desc)
 	    !cpumask_test_cpu(smp_processor_id(), affinity))
 		return false;
 
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	cpumask_copy(&available_cpus, affinity);
+	cpumask_andnot(&available_cpus, &available_cpus, cpu_isolated_mask);
+
+	/* keep affinity first when conflict with isolation */
+	if (cpumask_intersects(cpu_online_mask, &available_cpus))
+		affinity = &available_cpus;
+
+	if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
+		/*
+		 * The order of preference for selecting a fallback CPU is
+		 *
+		 * (1) online and un-isolated CPU from default affinity
+		 * (2) online and un-isolated CPU
+		 * (3) online CPU
+		 */
+		cpumask_andnot(&available_cpus, cpu_online_mask,
+			       cpu_isolated_mask);
+		affinity = &available_cpus;
+
+		if (cpumask_intersects(&available_cpus, irq_default_affinity))
+			cpumask_and(&available_cpus, &available_cpus,
+				    irq_default_affinity);
+		else if (cpumask_empty(&available_cpus))
+			affinity = cpu_online_mask;
+
+		ret = true;
+	}
+#else
 	if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
 		affinity = cpu_online_mask;
 		ret = true;
 	}
+#endif
 
 	c = irq_data_get_irq_chip(d);
 	if (!c->irq_set_affinity) {

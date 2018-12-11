@@ -1,12 +1,17 @@
+#define pr_fmt(fmt) "[page_ext] " fmt
+
 #include <linux/mm.h>
 #include <linux/mmzone.h>
 #include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/page_ext.h>
 #include <linux/memory.h>
 #include <linux/vmalloc.h>
 #include <linux/kmemleak.h>
 #include <linux/page_owner.h>
 #include <linux/page_idle.h>
+#include <linux/hisi/page_ext.h>
+#include <linux/hisi/page_tracker.h>
 
 /*
  * struct page extension
@@ -67,6 +72,9 @@ static struct page_ext_operations *page_ext_ops[] = {
 #endif
 #if defined(CONFIG_IDLE_PAGE_TRACKING) && !defined(CONFIG_64BIT)
 	&page_idle_ops,
+#endif
+#ifdef CONFIG_HISI_PAGE_TRACKER
+	&page_tracker_ops,
 #endif
 };
 
@@ -150,29 +158,35 @@ static int __init alloc_node_page_ext(int nid)
 	struct page_ext *base;
 	unsigned long table_size;
 	unsigned long nr_pages;
+	unsigned long start, end;
+	pg_data_t *pgdat = NODE_DATA(nid);
 
-	nr_pages = NODE_DATA(nid)->node_spanned_pages;
+	nr_pages = pgdat->node_spanned_pages;
 	if (!nr_pages)
 		return 0;
+
+	if (pgdat->node_page_ext)
+		return -EFAULT;
 
 	/*
 	 * Need extra space if node range is not aligned with
 	 * MAX_ORDER_NR_PAGES. When page allocator's buddy algorithm
 	 * checks buddy's status, range could be out of exact node range.
 	 */
-	if (!IS_ALIGNED(node_start_pfn(nid), MAX_ORDER_NR_PAGES) ||
-		!IS_ALIGNED(node_end_pfn(nid), MAX_ORDER_NR_PAGES))
-		nr_pages += MAX_ORDER_NR_PAGES;
-
-	table_size = get_entry_size() * nr_pages;
+	start = pgdat->node_start_pfn & ~(MAX_ORDER_NR_PAGES - 1);
+	end = pgdat_end_pfn(pgdat);
+	end = ALIGN(end, MAX_ORDER_NR_PAGES);
+	table_size =  (end - start) * get_entry_size();
 
 	base = memblock_virt_alloc_try_nid_nopanic(
 			table_size, PAGE_SIZE, __pa(MAX_DMA_ADDRESS),
 			BOOTMEM_ALLOC_ACCESSIBLE, nid);
 	if (!base)
 		return -ENOMEM;
-	NODE_DATA(nid)->node_page_ext = base;
+
 	total_usage += table_size;
+	pgdat->node_page_ext = base + (pgdat->node_start_pfn - start);
+
 	return 0;
 }
 
@@ -189,8 +203,15 @@ void __init page_ext_init_flatmem(void)
 		if (fail)
 			goto fail;
 	}
-	pr_info("allocated %ld bytes of page_ext\n", total_usage);
+
+	pr_info("allocated %ld bytes of page_ext before free\n", total_usage);
+
+	total_usage -= _free_unused_page_ext();
+
+	pr_info("allocated %ld bytes of page_ext after free\n", total_usage);
+
 	invoke_init_callbacks();
+
 	return;
 
 fail:

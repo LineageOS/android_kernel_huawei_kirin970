@@ -35,12 +35,16 @@
 #include <asm/machdep.h>
 #endif
 #include "sdhci-pltfm.h"
+#include <linux/hisi/hw_cmdline_parse.h> /*for runmode_is_factory*/
+#ifdef CONFIG_HISI_COUL
+#include <linux/power/hisi/coul/hisi_coul_drv.h>/*for is_hisi_battery_exist*/
+#endif
 
 unsigned int sdhci_pltfm_clk_get_max_clock(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 
-	return clk_get_rate(pltfm_host->clk);
+	return (unsigned int)clk_get_rate(pltfm_host->clk);
 }
 EXPORT_SYMBOL_GPL(sdhci_pltfm_clk_get_max_clock);
 
@@ -65,49 +69,165 @@ static bool sdhci_of_wp_inverted(struct device_node *np)
 	return false;
 #endif /* CONFIG_PPC */
 }
-
 void sdhci_get_of_property(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	u32 bus_width;
+	const __be32 *clk;
+	u32 bus_width = 0;
+	int size;
+	int runmode_normal;
+	int batterystate_exist;
 
-	if (of_get_property(np, "sdhci,auto-cmd12", NULL))
-		host->quirks |= SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12;
+	if (of_device_is_available(np)) {
+		if (of_get_property(np, "sdhci,auto-cmd12", NULL))
+			host->quirks |= SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12;
 
-	if (of_get_property(np, "sdhci,1-bit-only", NULL) ||
-	    (of_property_read_u32(np, "bus-width", &bus_width) == 0 &&
-	    bus_width == 1))
-		host->quirks |= SDHCI_QUIRK_FORCE_1_BIT_DATA;
+		if (of_get_property(np, "sdhci,1-bit-only", NULL) ||
+		    (of_property_read_u32(np, "bus-width", &bus_width) == 0 &&
+		    bus_width == 1))
+			host->quirks |= SDHCI_QUIRK_FORCE_1_BIT_DATA;
 
-	if (sdhci_of_wp_inverted(np))
-		host->quirks |= SDHCI_QUIRK_INVERTED_WRITE_PROTECT;
+		if (bus_width == 4)
+			host->mmc->caps |= MMC_CAP_4_BIT_DATA;
+		else if (bus_width == 8)
+			host->mmc->caps |= MMC_CAP_8_BIT_DATA | MMC_CAP_4_BIT_DATA;
 
-	if (of_get_property(np, "broken-cd", NULL))
-		host->quirks |= SDHCI_QUIRK_BROKEN_CARD_DETECTION;
+		if (sdhci_of_wp_inverted(np))
+			host->quirks |= SDHCI_QUIRK_INVERTED_WRITE_PROTECT;
 
-	if (of_get_property(np, "no-1-8-v", NULL))
-		host->quirks2 |= SDHCI_QUIRK2_NO_1_8_V;
+		if (of_get_property(np, "broken-cd", NULL))
+			host->quirks |= SDHCI_QUIRK_BROKEN_CARD_DETECTION;
 
-	if (of_device_is_compatible(np, "fsl,p2020-rev1-esdhc"))
-		host->quirks |= SDHCI_QUIRK_BROKEN_DMA;
+		if (of_find_property(np, "non-removable", NULL))
+			host->mmc->caps |= MMC_CAP_NONREMOVABLE;
 
-	if (of_device_is_compatible(np, "fsl,p2020-esdhc") ||
-	    of_device_is_compatible(np, "fsl,p1010-esdhc") ||
-	    of_device_is_compatible(np, "fsl,t4240-esdhc") ||
-	    of_device_is_compatible(np, "fsl,mpc8536-esdhc"))
-		host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
+		if (of_get_property(np, "no-1-8-v", NULL))
+			host->quirks2 |= SDHCI_QUIRK2_NO_1_8_V;
 
-	of_property_read_u32(np, "clock-frequency", &pltfm_host->clock);
+		if (of_device_is_compatible(np, "fsl,p2020-rev1-esdhc"))
+			host->quirks |= SDHCI_QUIRK_BROKEN_DMA;
 
-	if (of_find_property(np, "keep-power-in-suspend", NULL))
-		host->mmc->pm_caps |= MMC_PM_KEEP_POWER;
+		if (of_find_property(np, "use-pio", NULL))
+		{
+			host->quirks |= SDHCI_QUIRK_BROKEN_DMA;
+			host->quirks |= SDHCI_QUIRK_BROKEN_ADMA;
+		}
 
-	if (of_property_read_bool(np, "wakeup-source") ||
-	    of_property_read_bool(np, "enable-sdio-wakeup")) /* legacy */
-		host->mmc->pm_caps |= MMC_PM_WAKE_SDIO_IRQ;
+		if (of_find_property(np, "use-dma", NULL))
+			host->quirks |= SDHCI_QUIRK_BROKEN_ADMA;
+
+		if (!of_find_property(np, "sdhci-adma-64bit", NULL))
+			host->quirks2 |= SDHCI_QUIRK2_BROKEN_64_BIT_DMA;
+
+		if (of_device_is_compatible(np, "fsl,p2020-esdhc") ||
+		    of_device_is_compatible(np, "fsl,p1010-esdhc") ||
+		    of_device_is_compatible(np, "fsl,t4240-esdhc") ||
+		    of_device_is_compatible(np, "fsl,mpc8536-esdhc"))
+			host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
+
+		clk = of_get_property(np, "clock-frequency", &size);
+		if (clk && size == sizeof(*clk) && *clk)
+			pltfm_host->clock = be32_to_cpup(clk);
+
+		host->quirks2 |= SDHCI_QUIRK2_BROKEN_HS200;
+		if (of_find_property(np, "caps2-mmc-ddr50-1_8v", NULL))
+			host->mmc->caps |= MMC_CAP_1_8V_DDR;
+
+		if (of_find_property(np, "caps2-mmc-ddr50-1_2v", NULL))
+			host->mmc->caps |= MMC_CAP_1_2V_DDR;
+
+		if (of_find_property(np, "caps2-mmc-hs200-1_8v", NULL)) {
+			host->mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR;
+			host->quirks2 &= ~SDHCI_QUIRK2_BROKEN_HS200;
+		}
+
+		if (of_find_property(np, "caps2-mmc-hs200-1_2v", NULL)) {
+			host->mmc->caps2 |= MMC_CAP2_HS200_1_2V_SDR;
+			host->quirks2 &= ~SDHCI_QUIRK2_BROKEN_HS200;
+		}
+
+		if (of_find_property(np, "caps2-mmc-hs400-1_8v", NULL)){
+			host->mmc->caps2 |= MMC_CAP2_HS200_1_8V_SDR;
+			host->mmc->caps2 |= MMC_CAP2_HS400_1_8V;
+			host->quirks2 &= ~SDHCI_QUIRK2_BROKEN_HS200;
+		}
+
+		if (of_find_property(np, "caps2-mmc-hs400-1_2v", NULL)){
+			host->mmc->caps2 |= MMC_CAP2_HS200_1_2V_SDR;
+			host->mmc->caps2 |= MMC_CAP2_HS400_1_2V;
+			host->quirks2 &= ~SDHCI_QUIRK2_BROKEN_HS200;
+		}
+
+		if (of_find_property(np, "caps2-mmc-packed-command", NULL))
+			host->mmc->caps2 |= MMC_CAP2_PACKED_CMD;
+
+		runmode_normal = !runmode_is_factory();
+
+#ifdef CONFIG_HISI_COUL
+		batterystate_exist = is_hisi_battery_exist();
+#ifdef CONFIG_HLTHERM_RUNTEST
+		batterystate_exist = 1;
+		dev_info(&pdev->dev, "CONFIG_HLTHERM_RUNTEST is enable, set the batterystate_exist to 1\n");
+#endif
+#else 
+		batterystate_exist = 0;
+#endif	
+		dev_info(&pdev->dev, "runmode_normal = %d batterystate_exist = %d\n", runmode_normal, batterystate_exist);
+
+		if (of_find_property(np, "caps2-mmc-cache-ctrl", NULL))
+		{
+			dev_info(&pdev->dev, "caps2-mmc-cache-ctrl is set in dts.\n");
+			if(runmode_normal || batterystate_exist)
+			{
+				dev_info(&pdev->dev, "cache ctrl on\n");
+				host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
+			}
+			else
+			{
+				dev_info(&pdev->dev, "cache ctrl off\n");
+			}
+		}
+
+		if (of_find_property(np, "full-pwr-cycle", NULL))
+			host->mmc->caps2 |= MMC_CAP2_FULL_PWR_CYCLE;
+
+		if (of_find_property(np, "caps2-mmc-cmd-queue", NULL))
+		{
+			dev_info(&pdev->dev, "caps2-mmc-cmd-queue is set in dts.\n");
+			if(runmode_normal || batterystate_exist)
+			{
+				dev_info(&pdev->dev, "caps2-mmc-cmd-queue on\n");
+				host->mmc->caps2 |= MMC_CAP2_CMD_QUEUE;
+			}
+			else
+			{
+				dev_info(&pdev->dev, "caps2-mmc-cmd-queue off\n");
+			}
+		}
+
+		if (of_find_property(np, "keep-power-in-suspend", NULL))
+			host->mmc->pm_caps |= MMC_PM_KEEP_POWER;
+
+		if (of_property_read_bool(np, "wakeup-source") ||
+		    of_property_read_bool(np, "enable-sdio-wakeup"))/* legacy */
+			host->mmc->pm_caps |= MMC_PM_WAKE_SDIO_IRQ;
+
+		if (of_find_property(np, "caps2-mmc-enhanced_strobe-ctrl", NULL))
+			host->mmc->caps2 |= MMC_CAP2_ENHANCED_STROBE;
+
+		if (of_find_property(np, "caps2-mmc-cache_flush_barrier-ctrl", NULL))
+			host->mmc->caps2 |= MMC_CAP2_CACHE_FLUSH_BARRIER;
+
+		if (of_find_property(np, "caps2-mmc-bkops_auto-ctrl", NULL))
+			host->mmc->caps2 |= MMC_CAP2_BKOPS_AUTO_CTRL;
+
+		if (of_find_property(np, "caps2-mmc-HC-erase-size", NULL))
+			host->mmc->caps2 |= MMC_CAP2_HC_ERASE_SZ;
+	}
 }
+
 #else
 void sdhci_get_of_property(struct platform_device *pdev) {}
 #endif /* CONFIG_OF */
@@ -197,11 +317,9 @@ EXPORT_SYMBOL_GPL(sdhci_pltfm_register);
 int sdhci_pltfm_unregister(struct platform_device *pdev)
 {
 	struct sdhci_host *host = platform_get_drvdata(pdev);
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	int dead = (readl(host->ioaddr + SDHCI_INT_STATUS) == 0xffffffff);
 
 	sdhci_remove_host(host, dead);
-	clk_disable_unprepare(pltfm_host->clk);
 	sdhci_pltfm_free(pdev);
 
 	return 0;

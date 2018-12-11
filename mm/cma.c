@@ -38,6 +38,11 @@
 #include <trace/events/cma.h>
 
 #include "cma.h"
+#include "internal.h"
+
+#ifdef CONFIG_HISI_CMA_DEBUG
+#include <linux/hisi/hisi_cma_debug.h>
+#endif
 
 struct cma cma_areas[MAX_CMA_AREAS];
 unsigned cma_area_count;
@@ -143,7 +148,7 @@ static int __init cma_init_reserved_areas(void)
 {
 	int i;
 
-	for (i = 0; i < cma_area_count; i++) {
+	for (i = 0; i < cma_area_count; i++) {/*lint !e574*/
 		int ret = cma_activate_area(&cma_areas[i]);
 
 		if (ret)
@@ -265,7 +270,7 @@ int __init cma_declare_contiguous(phys_addr_t base,
 	 * you couldn't get a contiguous memory, which is not what we want.
 	 */
 	alignment = max(alignment,  (phys_addr_t)PAGE_SIZE <<
-			  max_t(unsigned long, MAX_ORDER - 1, pageblock_order));
+			  max_t(unsigned long, MAX_ORDER - 1, pageblock_order));/*lint !e666*/
 	base = ALIGN(base, alignment);
 	size = ALIGN(size, alignment);
 	limit &= ~(alignment - 1);
@@ -362,7 +367,7 @@ err:
 struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 {
 	unsigned long mask, offset;
-	unsigned long pfn = -1;
+	unsigned long pfn = -1;/*lint !e570*/
 	unsigned long start = 0;
 	unsigned long bitmap_maxno, bitmap_no, bitmap_count;
 	struct page *page = NULL;
@@ -392,6 +397,10 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 				offset);
 		if (bitmap_no >= bitmap_maxno) {
 			mutex_unlock(&cma->lock);
+#ifdef CONFIG_HISI_CMA_DEBUG
+			pr_info("bitmap_no %ld >= bitmap_maxno %ld\n", bitmap_no, bitmap_maxno);
+			ret = -ENOMEM;
+#endif
 			break;
 		}
 		bitmap_set(cma->bitmap, bitmap_no, bitmap_count);
@@ -421,6 +430,12 @@ struct page *cma_alloc(struct cma *cma, size_t count, unsigned int align)
 		start = bitmap_no + mask + 1;
 	}
 
+#ifdef CONFIG_HISI_CMA_DEBUG
+	if (ret)
+		dump_cma_page(cma, count, mask, offset,
+				bitmap_maxno, bitmap_count);
+#endif
+
 	trace_cma_alloc(pfn, page, count, align);
 
 	pr_debug("%s(): returned %p\n", __func__, page);
@@ -443,8 +458,6 @@ bool cma_release(struct cma *cma, const struct page *pages, unsigned int count)
 
 	if (!cma || !pages)
 		return false;
-
-	pr_debug("%s(page %p)\n", __func__, (void *)pages);
 
 	pfn = page_to_pfn(pages);
 

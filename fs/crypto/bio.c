@@ -63,13 +63,26 @@ static void completion_pages(struct work_struct *work)
 	bio_put(bio);
 }
 
-void fscrypt_enqueue_decrypt_bio(struct fscrypt_ctx *ctx, struct bio *bio)
+static inline void do_decrypt_dio_bio_pages(struct fscrypt_ctx *ctx,
+					    struct bio *bio, work_func_t func)
 {
-	INIT_WORK(&ctx->r.work, completion_pages);
+	INIT_WORK(&ctx->r.work, func);
 	ctx->r.bio = bio;
 	fscrypt_enqueue_decrypt_work(&ctx->r.work);
 }
+
+void fscrypt_enqueue_decrypt_bio(struct fscrypt_ctx *ctx, struct bio *bio)
+{
+	do_decrypt_dio_bio_pages(ctx, bio, completion_pages);
+}
 EXPORT_SYMBOL(fscrypt_enqueue_decrypt_bio);
+
+void fscrypt_decrypt_dio_bio_pages(struct fscrypt_ctx *ctx, struct bio *bio,
+				   work_func_t func)
+{
+	do_decrypt_dio_bio_pages(ctx, bio, func);
+}
+EXPORT_SYMBOL(fscrypt_decrypt_dio_bio_pages);
 
 void fscrypt_pullback_bio_page(struct page **page, bool restore)
 {

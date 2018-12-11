@@ -10,11 +10,12 @@
  */
 #ifndef _MMC_CORE_BUS_H
 #define _MMC_CORE_BUS_H
-
+/*cppcheck-suppress * */
 #define MMC_DEV_ATTR(name, fmt, args...)					\
 static ssize_t mmc_##name##_show (struct device *dev, struct device_attribute *attr, char *buf)	\
 {										\
 	struct mmc_card *card = mmc_dev_to_card(dev);				\
+	/*cppcheck-suppress * */						\
 	return sprintf(buf, fmt, args);						\
 }										\
 static DEVICE_ATTR(name, S_IRUGO, mmc_##name##_show, NULL)

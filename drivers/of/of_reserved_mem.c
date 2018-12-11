@@ -25,9 +25,21 @@
 #include <linux/sort.h>
 #include <linux/slab.h>
 
-#define MAX_RESERVED_REGIONS	16
+#if defined(CONFIG_HISI_DEBUG_FS)
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+#define DT_MEM_RESERVED  "dt_mem_reserved"
+#endif
+
+#define MAX_RESERVED_REGIONS	64
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
 static int reserved_mem_count;
+#if defined(CONFIG_HISI_DEBUG_FS)
+static  int dynamic_mem_reserved_count = 0;
+static  const char *dynamic_mem_reserved_array[MAX_RESERVED_REGIONS];
+static  int cma_mem_reserved_count = 0;
+static  const char *cma_mem_reserved_array[MAX_RESERVED_REGIONS];
+#endif
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
 #include <linux/memblock.h>
@@ -76,7 +88,6 @@ void __init fdt_reserved_mem_save_node(unsigned long node, const char *uname,
 				      phys_addr_t base, phys_addr_t size)
 {
 	struct reserved_mem *rmem = &reserved_mem[reserved_mem_count];
-
 	if (reserved_mem_count == ARRAY_SIZE(reserved_mem)) {
 		pr_err("not enough space all defined regions.\n");
 		return;
@@ -86,7 +97,13 @@ void __init fdt_reserved_mem_save_node(unsigned long node, const char *uname,
 	rmem->name = uname;
 	rmem->base = base;
 	rmem->size = size;
-
+#if defined(CONFIG_HISI_DEBUG_FS)
+	if((of_get_flat_dt_prop(node, "reusable", NULL))
+	   &&  (cma_mem_reserved_count < MAX_RESERVED_REGIONS)) {
+		cma_mem_reserved_array[cma_mem_reserved_count] = rmem->name;
+		cma_mem_reserved_count++;
+	}
+#endif
 	reserved_mem_count++;
 	return;
 }
@@ -95,6 +112,7 @@ void __init fdt_reserved_mem_save_node(unsigned long node, const char *uname,
  * res_mem_alloc_size() - allocate reserved memory described by 'size', 'align'
  *			  and 'alloc-ranges' properties
  */
+
 static int __init __reserved_mem_alloc_size(unsigned long node,
 	const char *uname, phys_addr_t *res_base, phys_addr_t *res_size)
 {
@@ -178,6 +196,12 @@ static int __init __reserved_mem_alloc_size(unsigned long node,
 		pr_info("failed to allocate memory for node '%s'\n", uname);
 		return -ENOMEM;
 	}
+#if defined(CONFIG_HISI_DEBUG_FS)
+	if(dynamic_mem_reserved_count < MAX_RESERVED_REGIONS) {
+		dynamic_mem_reserved_array[dynamic_mem_reserved_count] = uname;
+		dynamic_mem_reserved_count++;
+	}
+#endif
 
 	*res_base = base;
 	*res_size = size;
@@ -393,3 +417,76 @@ void of_reserved_mem_device_release(struct device *dev)
 	rmem->ops->device_release(rmem, dev);
 }
 EXPORT_SYMBOL_GPL(of_reserved_mem_device_release);
+
+#if defined(CONFIG_HISI_DEBUG_FS)
+
+static int dt_memory_reserved_debug_show(struct seq_file *m, void *private)
+{
+	struct reserved_mem *dt_mem_resrved = m->private;
+	struct reserved_mem *rmem;
+	int i, j;
+	int cma = 0;
+	int dynamic = 0;
+
+	seq_printf(m, "  num [start            ....              end]      [size]       [d/s]     [cma]       [ name ]\n");
+
+	for (i = 0; i < reserved_mem_count; i++) {
+		cma = 0;
+		dynamic = 0;
+		rmem = &(dt_mem_resrved[i]);
+
+		/* look for dynamic reserve memory node */
+		for(j = 0; j < dynamic_mem_reserved_count; j++) {
+			if(!strcmp(rmem->name, dynamic_mem_reserved_array[j])) {/*lint !e421*/
+				dynamic = 1;
+				break;
+			}
+		}
+
+		/* look for cma reserve memory node */
+		for(j = 0; j < cma_mem_reserved_count; j++) {
+			if(!strcmp(rmem->name, cma_mem_reserved_array[j])) {/*lint !e421*/
+				cma = 1;
+				break;
+			}
+		}
+
+		seq_printf(m, "%4d: ", i);
+		seq_printf(m, "[0x%016llx..0x%016llx]  %8lluKB   %8s %8s        %8s \n",
+			   (unsigned long long)rmem->base,
+			   (unsigned long long)(rmem->base + rmem->size - 1),
+			   (unsigned long long)rmem->size /SZ_1K ,
+			   (dynamic == 1)?"d":"s",
+			   (cma == 1)?"Y":"N",
+			   rmem->name);
+
+	}
+
+	return 0;
+}
+
+static int dt_memory_reserved_debug_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, dt_memory_reserved_debug_show, inode->i_private);
+}
+
+static const struct file_operations dt_memory_reserved_debug_fops = {
+	.open = dt_memory_reserved_debug_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int __init dt_memory_reserved_init_debugfs(void)
+{
+	struct dentry *root = debugfs_create_dir(DT_MEM_RESERVED, NULL);
+	if (!root)
+		return -ENXIO;
+	debugfs_create_file("dt_memory_reserved", S_IRUGO, root, reserved_mem, &dt_memory_reserved_debug_fops);
+
+	return 0;
+}
+__initcall(dt_memory_reserved_init_debugfs);
+
+#endif /* CONFIG_HISI_DEBUG_FS */
+

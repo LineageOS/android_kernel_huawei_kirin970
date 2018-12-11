@@ -148,6 +148,9 @@ static inline void cpu_panic_kernel(void)
  */
 bool cpus_are_stuck_in_kernel(void);
 
+#ifdef CONFIG_HISI_BB
+extern unsigned int g_cpu_in_ipi_stop;
+#endif
 #endif /* ifndef __ASSEMBLY__ */
 
 #endif /* ifndef __ASM_SMP_H */

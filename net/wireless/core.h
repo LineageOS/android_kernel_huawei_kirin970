@@ -213,6 +213,19 @@ enum cfg80211_event_type {
 	EVENT_DISCONNECTED,
 	EVENT_IBSS_JOINED,
 	EVENT_STOPPED,
+#ifdef CONFIG_HW_VOWIFI
+	EVENT_DRV_VOWIFI,
+#endif
+#ifdef CONFIG_HW_ABS
+	EVENT_DRV_ANT,
+#endif
+#ifdef CONFIG_HW_WIFI_MSS
+	EVENT_DRV_MSS,
+#endif
+#ifdef CONFIG_HW_WIFI_RSSI
+	EVENT_DRV_TAS_RSSI,
+#endif
+	EVENT_DRV_LAST
 };
 
 struct cfg80211_event {

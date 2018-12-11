@@ -197,11 +197,8 @@ static int xgene_mdio_reset(struct xgene_mdio_pdata *pdata)
 	}
 
 	ret = xgene_enet_ecc_init(pdata);
-	if (ret) {
-		if (pdata->dev->of_node)
-			clk_disable_unprepare(pdata->clk);
+	if (ret)
 		return ret;
-	}
 	xgene_gmac_reset(pdata);
 
 	return 0;
@@ -232,7 +229,7 @@ static int xgene_xfi_mdio_write(struct mii_bus *bus, int phy_id,
 
 	val = SET_VAL(HSTPHYADX, phy_id) | SET_VAL(HSTREGADX, reg) |
 	      SET_VAL(HSTMIIMWRDAT, data);
-	xgene_enet_wr_mdio_csr(addr, MIIM_FIELD_ADDR, val);
+	xgene_enet_wr_mdio_csr(addr, MIIM_FIELD_ADDR, data);
 
 	val = HSTLDCMD | SET_VAL(HSTMIIMCMD, MIIM_CMD_LEGACY_WRITE);
 	xgene_enet_wr_mdio_csr(addr, MIIM_COMMAND_ADDR, val);
@@ -314,30 +311,6 @@ static acpi_status acpi_register_phy(acpi_handle handle, u32 lvl,
 }
 #endif
 
-static const struct of_device_id xgene_mdio_of_match[] = {
-	{
-		.compatible = "apm,xgene-mdio-rgmii",
-		.data = (void *)XGENE_MDIO_RGMII
-	},
-	{
-		.compatible = "apm,xgene-mdio-xfi",
-		.data = (void *)XGENE_MDIO_XFI
-	},
-	{},
-};
-MODULE_DEVICE_TABLE(of, xgene_mdio_of_match);
-
-#ifdef CONFIG_ACPI
-static const struct acpi_device_id xgene_mdio_acpi_match[] = {
-	{ "APMC0D65", XGENE_MDIO_RGMII },
-	{ "APMC0D66", XGENE_MDIO_XFI },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(acpi, xgene_mdio_acpi_match);
-#endif
-
-
 static int xgene_mdio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -391,10 +364,8 @@ static int xgene_mdio_probe(struct platform_device *pdev)
 		return ret;
 
 	mdio_bus = mdiobus_alloc();
-	if (!mdio_bus) {
-		ret = -ENOMEM;
-		goto out_clk;
-	}
+	if (!mdio_bus)
+		return -ENOMEM;
 
 	mdio_bus->name = "APM X-Gene MDIO bus";
 
@@ -423,7 +394,7 @@ static int xgene_mdio_probe(struct platform_device *pdev)
 		mdio_bus->phy_mask = ~0;
 		ret = mdiobus_register(mdio_bus);
 		if (ret)
-			goto out_mdiobus;
+			goto out;
 
 		acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_HANDLE(dev), 1,
 				    acpi_register_phy, NULL, mdio_bus, NULL);
@@ -431,19 +402,15 @@ static int xgene_mdio_probe(struct platform_device *pdev)
 	}
 
 	if (ret)
-		goto out_mdiobus;
+		goto out;
 
 	pdata->mdio_bus = mdio_bus;
 	xgene_mdio_status = true;
 
 	return 0;
 
-out_mdiobus:
+out:
 	mdiobus_free(mdio_bus);
-
-out_clk:
-	if (dev->of_node)
-		clk_disable_unprepare(pdata->clk);
 
 	return ret;
 }
@@ -462,6 +429,32 @@ static int xgene_mdio_remove(struct platform_device *pdev)
 
 	return 0;
 }
+
+#ifdef CONFIG_OF
+static const struct of_device_id xgene_mdio_of_match[] = {
+	{
+		.compatible = "apm,xgene-mdio-rgmii",
+		.data = (void *)XGENE_MDIO_RGMII
+	},
+	{
+		.compatible = "apm,xgene-mdio-xfi",
+		.data = (void *)XGENE_MDIO_XFI
+	},
+	{},
+};
+
+MODULE_DEVICE_TABLE(of, xgene_mdio_of_match);
+#endif
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id xgene_mdio_acpi_match[] = {
+	{ "APMC0D65", XGENE_MDIO_RGMII },
+	{ "APMC0D66", XGENE_MDIO_XFI },
+	{ }
+};
+
+MODULE_DEVICE_TABLE(acpi, xgene_mdio_acpi_match);
+#endif
 
 static struct platform_driver xgene_mdio_driver = {
 	.driver = {

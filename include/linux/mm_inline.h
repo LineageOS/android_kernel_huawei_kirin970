@@ -3,6 +3,7 @@
 
 #include <linux/huge_mm.h>
 #include <linux/swap.h>
+#include <linux/hisi/page_tracker.h>
 
 /**
  * page_is_file_cache - should the page be on a file LRU or anon LRU?
@@ -48,6 +49,12 @@ static __always_inline void add_page_to_lru_list(struct page *page,
 {
 	update_lru_size(lruvec, lru, page_zonenum(page), hpage_nr_pages(page));
 	list_add(&page->lru, &lruvec->lists[lru]);
+	if ((NR_INACTIVE_ANON == NR_LRU_BASE + lru) ||
+		(NR_ACTIVE_ANON == NR_LRU_BASE + lru))
+		page_tracker_set_type(page, TRACK_ANON, 0);
+	else if ((NR_INACTIVE_FILE == NR_LRU_BASE + lru) ||
+		(NR_ACTIVE_FILE == NR_LRU_BASE + lru))
+		page_tracker_set_type(page, TRACK_FILE, 0);
 }
 
 static __always_inline void del_page_from_lru_list(struct page *page,

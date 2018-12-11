@@ -94,4 +94,9 @@
 
 #define SO_COOKIE		57
 
+#ifdef CONFIG_HUAWEI_XENGINE
+#define SO_XENGINE_PROXYUID			100
+#define SO_XENGINE_SOCKFLAG			101
+#endif
+
 #endif /* __ASM_GENERIC_SOCKET_H */

@@ -301,4 +301,61 @@ config VMD
 	  To compile this driver as a module, choose M here: the
 	  module will be called vmd.
 
+config KIRIN_PCIE_TEST
+	tristate "Hisilicon kirin PCIe test"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want to use testcases for PCIe controller on Hisilicon Kirin SoC
+
+config PCIE_KIRIN
+	tristate "Hisilicon kirin PCIe platform bus driver"
+	depends on PCI
+	select PCIE_DW
+	help
+	  Say Y here if you want PCIe controller support on Hisilicon Kirin SoC
+
+config PCIE_KIRIN_SLT
+	tristate "Hisilicon kirin PCIe SLT"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want to use SLT Func for PCIe on Hisilicon Kirin SoC
+
+config PCIE_KIRIN_SLT_HI110X
+	tristate "kirin PCIe SLT connected with hi110x"
+	depends on PCIE_KIRIN_SLT
+	help
+	  Say Y here if you want to use SLT Func for Kirin PCIe with device hi110x
+
+config PCIE_KIRIN_MNTN
+	tristate "Hisilicon kirin PCIe mntn log"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want PCIe controller support on Hisilicon Kirin SoC
+
+config KIRIN_PCIE_JAN
+	tristate "Hisilicon kirin PCIe RC-Jan"
+	select PCIE_KIRIN
+
+config KIRIN_PCIE_FEB
+	tristate "Hisilicon kirin PCIe RC-Feb"
+	select PCIE_KIRIN
+
+config KIRIN_PCIE_MAR
+	tristate "Hisilicon kirin PCIe RC-Mar"
+	select PCIE_KIRIN
+
+config KIRIN_PCIE_APR
+        tristate "Hisilicon kirin PCIe RC-Apr"
+        select PCIE_KIRIN
+        select KIRIN_PCIE_CPLTIMEOUT_INT
+
+config KIRIN_PCIE_CPLTIMEOUT_INT
+        bool
+
+config KIRIN_PCIE_NOC_DBG
+	tristate "Hisilicon kirin NOC DEBUG"
+	select PCIE_KIRIN
+	help
+	  Say Y here if you want dump pcie host info when PCIe NOC happen
+
 endmenu

@@ -74,6 +74,9 @@ struct gether {
 	bool				is_fixed;
 	u32				fixed_out_len;
 	u32				fixed_in_len;
+	unsigned			ul_max_pkts_per_xfer;
+	unsigned			dl_max_pkts_per_xfer;
+	bool				multi_pkt_xfer;
 	bool				supports_multi_frame;
 	struct sk_buff			*(*wrap)(struct gether *port,
 						struct sk_buff *skb);
@@ -92,7 +95,11 @@ struct gether {
 			|USB_CDC_PACKET_TYPE_DIRECTED)
 
 /* variant of gether_setup that allows customizing network device name */
+#ifdef CONFIG_HISI_USB_CONFIGFS
+struct net_device *gether_setup_name(struct usb_gadget *g,
+#else
 struct eth_dev *gether_setup_name(struct usb_gadget *g,
+#endif
 		const char *dev_addr, const char *host_addr,
 		u8 ethaddr[ETH_ALEN], unsigned qmult, const char *netname);
 
@@ -109,7 +116,11 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g,
  *
  * Returns a eth_dev pointer on success, or an ERR_PTR on failure
  */
+#ifdef CONFIG_HISI_USB_CONFIGFS
+static inline struct net_device *gether_setup(struct usb_gadget *g,
+#else
 static inline struct eth_dev *gether_setup(struct usb_gadget *g,
+#endif
 		const char *dev_addr, const char *host_addr,
 		u8 ethaddr[ETH_ALEN], unsigned qmult)
 {
@@ -221,6 +232,14 @@ int gether_get_host_addr_cdc(struct net_device *net, char *host_addr, int len);
 void gether_get_host_addr_u8(struct net_device *net, u8 host_mac[ETH_ALEN]);
 
 /**
+ * get_ether_addr_str - convert eth address to string
+ * @dev_addr: place to store eth address
+ * @str: place to store eth address string
+ * @len: length of the @host_addr buffer
+ */
+int get_ether_addr_str(u8 dev_addr[ETH_ALEN], char *str, int len);
+
+/**
  * gether_set_qmult - initialize an ethernet-over-usb link with a multiplier
  * @net: device representing this link
  * @qmult: queue multiplier
@@ -267,5 +286,9 @@ static inline bool can_support_ecm(struct usb_gadget *gadget)
 	 */
 	return true;
 }
+
+/* This function add for f_rndis&f_ncm on Hisilicon Kirin Platform */
+void gether_set_gadget_without_set_netdev(struct net_device *net,
+		struct usb_gadget *g);
 
 #endif /* __U_ETHER_H */

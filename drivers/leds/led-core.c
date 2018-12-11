@@ -18,6 +18,9 @@
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
 #include "leds.h"
+#if defined(CONFIG_LEDS_HISI) || defined(CONFIG_LEDS_HISI_SPMI)
+#include <linux/string.h>
+#endif
 
 DECLARE_RWSEM(leds_list_lock);
 EXPORT_SYMBOL_GPL(leds_list_lock);
@@ -186,7 +189,7 @@ void led_blink_set(struct led_classdev *led_cdev,
 		   unsigned long *delay_on,
 		   unsigned long *delay_off)
 {
-	del_timer_sync(&led_cdev->blink_timer);
+	led_stop_software_blink(led_cdev);
 
 	led_cdev->flags &= ~LED_BLINK_SW;
 	led_cdev->flags &= ~LED_BLINK_ONESHOT;
@@ -239,6 +242,14 @@ void led_set_brightness(struct led_classdev *led_cdev,
 		 * work queue task to avoid problems in case we are called
 		 * from hard irq context.
 		 */
+#if defined(CONFIG_LEDS_HISI) || defined(CONFIG_LEDS_HISI_SPMI)
+		if(!(strcmp(led_cdev->name, "red") && strcmp(led_cdev->name, "green") && strcmp(led_cdev->name, "blue"))) {
+			led_stop_software_blink(led_cdev);
+			led_set_brightness_nosleep(led_cdev, brightness);
+		} else {
+			schedule_work(&led_cdev->set_brightness_work);
+		}
+#else
 		if (brightness == LED_OFF) {
 			led_cdev->flags |= LED_BLINK_DISABLE;
 			schedule_work(&led_cdev->set_brightness_work);
@@ -246,6 +257,7 @@ void led_set_brightness(struct led_classdev *led_cdev,
 			led_cdev->flags |= LED_BLINK_BRIGHTNESS_CHANGE;
 			led_cdev->blink_brightness = brightness;
 		}
+#endif
 		return;
 	}
 

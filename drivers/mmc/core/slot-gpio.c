@@ -7,10 +7,15 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 
+#include <linux/version.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0))
 #include <linux/gpio/consumer.h>
+#endif
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
 #include <linux/mmc/host.h>
@@ -19,6 +24,90 @@
 #include <linux/slab.h>
 
 #include "slot-gpio.h"
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 0))
+struct gpio_desc;
+
+#define GPIOD_FLAGS_BIT_DIR_SET		BIT(0)
+#define GPIOD_FLAGS_BIT_DIR_OUT		BIT(1)
+#define GPIOD_FLAGS_BIT_DIR_VAL		BIT(2)
+
+/**
+ * Optional flags that can be passed to one of gpiod_* to configure direction
+ * and output value. These values cannot be OR'd.
+ */
+enum gpiod_flags {
+	GPIOD_ASIS	= 0,
+	GPIOD_IN	= GPIOD_FLAGS_BIT_DIR_SET,
+	GPIOD_OUT_LOW	= GPIOD_FLAGS_BIT_DIR_SET | GPIOD_FLAGS_BIT_DIR_OUT,
+	GPIOD_OUT_HIGH	= GPIOD_FLAGS_BIT_DIR_SET | GPIOD_FLAGS_BIT_DIR_OUT |
+			  GPIOD_FLAGS_BIT_DIR_VAL,
+};
+
+static struct gpio_desc *gpio_to_desc(unsigned gpio)
+{
+	return ERR_PTR(-EINVAL);
+}
+
+static int desc_to_gpio(const struct gpio_desc *desc)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return -EINVAL;
+}
+
+static int gpiod_to_irq(const struct gpio_desc *desc)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return -EINVAL;
+}
+
+static int gpiod_get_value_cansleep(const struct gpio_desc *desc)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return 0;
+}
+
+static int gpiod_get_raw_value_cansleep(const struct gpio_desc *desc)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return 0;
+}
+
+static int gpiod_direction_input(struct gpio_desc *desc)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return -ENOSYS;
+}
+
+static void devm_gpiod_put(struct device *dev, struct gpio_desc *desc)
+{
+	might_sleep();
+
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+}
+
+static  int gpiod_set_debounce(struct gpio_desc *desc, unsigned debounce)
+{
+	/* GPIO can never have been requested */
+	WARN_ON(1);
+	return -ENOSYS;
+}
+
+static struct gpio_desc *__must_check
+devm_gpiod_get_index(struct device *dev,
+		 const char *con_id,
+		 unsigned int idx,
+		 enum gpiod_flags flags)
+{
+	return ERR_PTR(-ENOSYS);
+}
+#endif
 
 struct mmc_gpio {
 	struct gpio_desc *ro_gpio;
@@ -64,11 +153,11 @@ int mmc_gpio_get_ro(struct mmc_host *host)
 
 	if (!ctx || !ctx->ro_gpio)
 		return -ENOSYS;
-
+	/*lint -save -e514*/
 	if (ctx->override_ro_active_level)
 		return !gpiod_get_raw_value_cansleep(ctx->ro_gpio) ^
 			!!(host->caps2 & MMC_CAP2_RO_ACTIVE_HIGH);
-
+	/*lint -restore*/
 	return gpiod_get_value_cansleep(ctx->ro_gpio);
 }
 EXPORT_SYMBOL(mmc_gpio_get_ro);
@@ -79,11 +168,11 @@ int mmc_gpio_get_cd(struct mmc_host *host)
 
 	if (!ctx || !ctx->cd_gpio)
 		return -ENOSYS;
-
+	/*lint -save -e514*/
 	if (ctx->override_cd_active_level)
 		return !gpiod_get_raw_value_cansleep(ctx->cd_gpio) ^
 			!!(host->caps2 & MMC_CAP2_CD_ACTIVE_HIGH);
-
+	/*lint -restore*/
 	return gpiod_get_value_cansleep(ctx->cd_gpio);
 }
 EXPORT_SYMBOL(mmc_gpio_get_cd);
@@ -303,3 +392,4 @@ int mmc_gpiod_request_ro(struct mmc_host *host, const char *con_id,
 	return 0;
 }
 EXPORT_SYMBOL(mmc_gpiod_request_ro);
+#pragma GCC diagnostic pop
