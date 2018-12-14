@@ -2684,10 +2684,6 @@ long f2fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return f2fs_ioc_flush_device(filp, arg);
 	case F2FS_IOC_GET_FEATURES:
 		return f2fs_ioc_get_features(filp, arg);
-	case F2FS_IOC_GET_PIN_FILE:
-		return f2fs_ioc_get_pin_file(filp, arg);
-	case F2FS_IOC_SET_PIN_FILE:
-		return f2fs_ioc_set_pin_file(filp, arg);
 #if DEFINE_F2FS_FS_SDP_ENCRYPTION
 	case F2FS_IOC_SET_SDP_ENCRYPTION_POLICY:
 		return f2fs_ioc_set_sdp_encryption_policy(filp, arg);
@@ -2772,8 +2768,6 @@ long f2fs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case F2FS_IOC_MOVE_RANGE:
 	case F2FS_IOC_FLUSH_DEVICE:
 	case F2FS_IOC_GET_FEATURES:
-	case F2FS_IOC_GET_PIN_FILE:
-	case F2FS_IOC_SET_PIN_FILE:
 		break;
 	default:
 		return -ENOIOCTLCMD;
