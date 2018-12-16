@@ -25,7 +25,7 @@ int always_use_hifi_usb(int val)
 	return val;
 }
 #else
-#define never_hifi_usb 0
+#define never_hifi_usb 1
 #define always_hifi_usb 0
 #endif
 
