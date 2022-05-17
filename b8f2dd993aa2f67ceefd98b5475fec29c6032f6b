@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "d95af180_cf57431e",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 16185
+      },
+      "writtenOn": "2022-05-17T18:58:02Z",
+      "side": 1,
+      "message": "Post upgrade to 22.04 - this seems needed - likely due to some host tool being newer.",
+      "revId": "b8f2dd993aa2f67ceefd98b5475fec29c6032f6b",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    }
+  ]
+}
